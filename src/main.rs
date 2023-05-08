@@ -9,7 +9,8 @@ use sql_error::SqlError;
 use table::Table;
 
 fn main() {
-    let mut table = Table::open("run.db").unwrap();
+    let filename = std::env::args().nth(1).expect("minisql <db filename>");
+    let mut table = Table::open(&filename).unwrap();
     loop {
         let mut buf = String::new();
         if let Err(e) = std::io::stdin().read_line(&mut buf) {
