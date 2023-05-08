@@ -21,7 +21,7 @@ impl Display for Row {
         )
     }
 }
-const ROW_SIZE: usize = 303;
+pub const ROW_SIZE: usize = 303;
 
 impl Row {
     pub fn serialize(&self) -> [u8; ROW_SIZE] {
@@ -52,7 +52,7 @@ impl Row {
 }
 
 use crate::pager::PAGE_SIZE;
-const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
+pub const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 
 pub struct Table {
     pub num_rows: usize,
@@ -65,14 +65,6 @@ impl Table {
             num_rows: 0,
             pager: Pager::open(filename)?,
         })
-    }
-
-    pub fn row_slot(&mut self, row_num: usize) -> Result<&mut [u8], SqlError> {
-        let page_num = row_num / ROWS_PER_PAGE;
-        let page = self.pager.get_page(page_num)?;
-        let row_offset = row_num % ROWS_PER_PAGE;
-        let byte_offset = row_offset * ROW_SIZE;
-        Ok(&mut page[byte_offset..byte_offset + ROW_SIZE])
     }
 
     pub fn close(&mut self) -> Result<(), SqlError> {

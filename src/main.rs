@@ -1,4 +1,5 @@
 mod commands;
+mod cursor;
 mod pager;
 mod sql_error;
 mod string_utils;

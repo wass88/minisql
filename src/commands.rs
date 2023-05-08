@@ -1,3 +1,4 @@
+use crate::cursor::Cursor;
 use crate::sql_error::SqlError;
 use crate::string_utils::copy_null_terminated;
 use crate::table::{Row, Table};
@@ -52,13 +53,20 @@ impl Statement {
                     name: *name,
                     email: *email,
                 };
-                let slot = table.row_slot(table.num_rows)?;
-                slot.copy_from_slice(&row.serialize());
+                let mut cursor = Cursor::table_end(table);
+                cursor.value()?.copy_from_slice(&row.serialize());
                 table.num_rows += 1;
                 Ok(row)
             }
             Statement::Select(i) => {
-                let slot = table.row_slot(*i as usize)?;
+                let mut cursor = Cursor::table_start(table);
+                for _ in 0..*i {
+                    if cursor.end_of_table {
+                        return Err(SqlError::EndOfTable);
+                    }
+                    cursor.advance();
+                }
+                let slot = cursor.value()?;
                 let row = Row::deserialize(slot);
                 Ok(row)
             }
