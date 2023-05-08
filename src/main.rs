@@ -46,3 +46,30 @@ fn meta_command(buf: &str) -> Result<(), SqlError> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn insert_select() {
+        let mut table = Table::new();
+
+        let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
+        let row = statement.execute(&mut table).unwrap();
+        assert_eq!(row.id, 0);
+
+        let statement = prepare_statement("insert 21 nnna nnna@example.com").unwrap();
+        let row = statement.execute(&mut table).unwrap();
+        assert_eq!(row.id, 1);
+
+        let statement = prepare_statement("select 0").unwrap();
+        let row = statement.execute(&mut table).unwrap();
+        assert_eq!(row.id, 0);
+        assert_eq!(row.age, 1);
+        assert_eq!(string_utils::to_string_null_terminated(&row.name), "wass");
+        assert_eq!(
+            string_utils::to_string_null_terminated(&row.email),
+            "wass@example.com"
+        );
+    }
+}
