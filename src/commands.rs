@@ -52,13 +52,13 @@ impl Statement {
                     name: *name,
                     email: *email,
                 };
-                let slot = table.row_slot(table.num_rows);
+                let slot = table.row_slot(table.num_rows)?;
                 slot.copy_from_slice(&row.serialize());
                 table.num_rows += 1;
                 Ok(row)
             }
             Statement::Select(i) => {
-                let slot = table.row_slot(*i as usize);
+                let slot = table.row_slot(*i as usize)?;
                 let row = Row::deserialize(slot);
                 Ok(row)
             }

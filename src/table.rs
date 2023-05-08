@@ -1,4 +1,4 @@
-use crate::string_utils::to_string_null_terminated;
+use crate::{pager::Pager, sql_error::SqlError, string_utils::to_string_null_terminated};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
@@ -51,30 +51,44 @@ impl Row {
     }
 }
 
-const PAGE_SIZE: usize = 4096;
+use crate::pager::PAGE_SIZE;
 const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 
 pub struct Table {
     pub num_rows: usize,
-    pub pages: Vec<[u8; PAGE_SIZE]>,
+    pub pager: Pager,
 }
 
 impl Table {
-    pub fn new() -> Self {
-        Table {
+    pub fn open(filename: &str) -> Result<Self, SqlError> {
+        Ok(Table {
             num_rows: 0,
-            pages: vec![],
-        }
+            pager: Pager::open(filename)?,
+        })
     }
 
-    pub fn row_slot(&mut self, row_num: usize) -> &mut [u8] {
+    pub fn row_slot(&mut self, row_num: usize) -> Result<&mut [u8], SqlError> {
         let page_num = row_num / ROWS_PER_PAGE;
-        if page_num >= self.pages.len() {
-            self.pages.push([0u8; PAGE_SIZE])
-        }
-        let page = &mut self.pages[page_num];
+        let page = self.pager.get_page(page_num)?;
         let row_offset = row_num % ROWS_PER_PAGE;
         let byte_offset = row_offset * ROW_SIZE;
-        &mut page[byte_offset..byte_offset + ROW_SIZE]
+        Ok(&mut page[byte_offset..byte_offset + ROW_SIZE])
+    }
+
+    pub fn close(&mut self) -> Result<(), SqlError> {
+        let num_full_pages = self.num_rows / ROWS_PER_PAGE;
+        for i in 0..num_full_pages {
+            if self.pager.pages[i].is_none() {
+                continue;
+            }
+            self.pager.flush(i, PAGE_SIZE)?;
+            self.pager.drop(i);
+        }
+        let remains_rows = self.num_rows % ROWS_PER_PAGE;
+        if remains_rows > 0 {
+            self.pager.flush(num_full_pages, remains_rows * ROW_SIZE)?;
+            self.pager.drop(num_full_pages);
+        }
+        Ok(())
     }
 }
