@@ -52,34 +52,27 @@ impl Row {
 }
 
 use crate::pager::PAGE_SIZE;
-pub const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 
 pub struct Table {
-    pub num_rows: usize,
     pub pager: Pager,
+    pub root_page_num: usize,
 }
 
 impl Table {
     pub fn open(filename: &str) -> Result<Self, SqlError> {
         Ok(Table {
-            num_rows: 0,
             pager: Pager::open(filename)?,
+            root_page_num: 0,
         })
     }
 
     pub fn close(&mut self) -> Result<(), SqlError> {
-        let num_full_pages = self.num_rows / ROWS_PER_PAGE;
-        for i in 0..num_full_pages {
+        for i in 0..self.pager.num_pages {
             if self.pager.pages[i].is_none() {
                 continue;
             }
-            self.pager.flush(i, PAGE_SIZE)?;
+            self.pager.flush(i)?;
             self.pager.drop(i);
-        }
-        let remains_rows = self.num_rows % ROWS_PER_PAGE;
-        if remains_rows > 0 {
-            self.pager.flush(num_full_pages, remains_rows * ROW_SIZE)?;
-            self.pager.drop(num_full_pages);
         }
         Ok(())
     }

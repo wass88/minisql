@@ -1,3 +1,4 @@
+mod b_tree;
 mod commands;
 mod cursor;
 mod pager;
@@ -31,7 +32,7 @@ fn main() {
 
 fn exec_buf(buf: &str, table: &mut Table) -> Result<(), SqlError> {
     if buf.starts_with(".") {
-        meta_command(buf, table)?;
+        return meta_command(buf, table);
     }
     let statement = prepare_statement(buf)?;
     let row = statement.execute(table)?;
@@ -44,6 +45,10 @@ fn meta_command(buf: &str, table: &mut Table) -> Result<(), SqlError> {
         ".exit" => {
             table.close()?;
             std::process::exit(0);
+        }
+        ".btree" => {
+            print!("{}", table.pager.node(0)?);
+            return Ok(());
         }
         _ => {
             return Err(SqlError::UnknownCommand(buf.to_string()));
@@ -107,8 +112,6 @@ mod test {
             statement.execute(&mut table).unwrap();
         }
         table.close().unwrap();
-
-        println!("select...");
 
         let mut table = Table::open("./test.db").unwrap();
         for i in 0..rows {

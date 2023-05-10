@@ -7,4 +7,5 @@ pub enum SqlError {
     IOError(std::io::Error, String),
     TableFull,
     EndOfTable,
+    CorruptFile,
 }

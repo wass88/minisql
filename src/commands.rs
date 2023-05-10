@@ -47,19 +47,18 @@ impl Statement {
     pub fn execute(&self, table: &mut Table) -> Result<Row, SqlError> {
         match self {
             Statement::Insert(age, name, email) => {
+                let mut cursor = Cursor::table_end(table)?;
                 let row = Row {
-                    id: table.num_rows as u64,
+                    id: cursor.cell_num as u64,
                     age: *age,
                     name: *name,
                     email: *email,
                 };
-                let mut cursor = Cursor::table_end(table);
-                cursor.value()?.copy_from_slice(&row.serialize());
-                table.num_rows += 1;
+                cursor.insert(row.id, row.serialize())?;
                 Ok(row)
             }
             Statement::Select(i) => {
-                let mut cursor = Cursor::table_start(table);
+                let mut cursor = Cursor::table_start(table)?;
                 for _ in 0..*i {
                     if cursor.end_of_table {
                         return Err(SqlError::EndOfTable);

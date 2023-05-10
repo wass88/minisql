@@ -4,7 +4,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
 };
 
-use crate::sql_error::SqlError;
+use crate::{b_tree::Node, sql_error::SqlError};
 
 pub const PAGE_SIZE: usize = 4096;
 pub const MAX_PAGES: usize = 100;
@@ -13,7 +13,7 @@ pub struct Pager {
     pub file: File,
     pub file_length: usize,
     pub num_pages: usize,
-    pub pages: [Option<Box<[u8; PAGE_SIZE]>>; MAX_PAGES],
+    pub pages: [Option<Box<Node>>; MAX_PAGES],
 }
 
 impl Pager {
@@ -26,16 +26,23 @@ impl Pager {
             .map_err(|e| SqlError::IOError(e, "Failed to open file".to_string()))?;
 
         let file_length = file.metadata().unwrap().len() as usize;
-        let num_pages = 0;
+        let num_pages = file_length / PAGE_SIZE;
+        if file_length % PAGE_SIZE != 0 {
+            return Err(SqlError::CorruptFile);
+        }
         let pages = array![None; MAX_PAGES];
-        Ok(Pager {
+        let mut pager = Pager {
             file,
             file_length,
             num_pages,
             pages,
-        })
+        };
+        if pager.num_pages == 0 {
+            pager.node(0)?.init_leaf()
+        }
+        Ok(pager)
     }
-    pub fn get_page(&mut self, page_num: usize) -> Result<&mut Box<[u8; PAGE_SIZE]>, SqlError> {
+    pub fn node(&mut self, page_num: usize) -> Result<&mut Box<Node>, SqlError> {
         if page_num >= MAX_PAGES {
             return Err(SqlError::TableFull);
         }
@@ -51,11 +58,14 @@ impl Pager {
                     .read(&mut buf)
                     .map_err(|e| SqlError::IOError(e, "Failed to read".to_string()))?;
             }
-            self.pages[page_num] = Some(Box::new(buf));
+            self.pages[page_num] = Some(Box::new(Node::new(buf)));
+            if page_num >= self.num_pages {
+                self.num_pages = page_num + 1;
+            }
         }
         Ok(self.pages[page_num].as_mut().unwrap())
     }
-    pub fn flush(&mut self, page_num: usize, size: usize) -> Result<(), SqlError> {
+    pub fn flush(&mut self, page_num: usize) -> Result<(), SqlError> {
         if self.pages[page_num].is_none() {
             return Ok(());
         }
@@ -63,7 +73,7 @@ impl Pager {
             .seek(SeekFrom::Start((page_num * PAGE_SIZE) as u64))
             .map_err(|e| SqlError::IOError(e, "Failed to seek to write".to_string()))?;
         self.file
-            .write_all(&self.pages[page_num].as_ref().unwrap()[0..size])
+            .write_all(self.pages[page_num].as_ref().unwrap().buf.as_slice())
             .map_err(|e| SqlError::IOError(e, "Failed to write".to_string()))?;
         Ok(())
     }
