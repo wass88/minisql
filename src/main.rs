@@ -35,8 +35,10 @@ fn exec_buf(buf: &str, table: &mut Table) -> Result<(), SqlError> {
         return meta_command(buf, table);
     }
     let statement = prepare_statement(buf)?;
-    let row = statement.execute(table)?;
-    println!("{}", row);
+    let rows = statement.execute(table)?;
+    for row in rows {
+        println!("{}", row);
+    }
     Ok(())
 }
 
@@ -63,15 +65,15 @@ mod test {
         let mut table = init_test_db();
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
-        let row = statement.execute(&mut table).unwrap();
+        let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 1);
 
         let statement = prepare_statement("insert 2 nnna nnna@example.com").unwrap();
-        let row = statement.execute(&mut table).unwrap();
+        let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 2);
 
         let statement = prepare_statement("select 1").unwrap();
-        let row = statement.execute(&mut table).unwrap();
+        let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 1);
         assert_eq!(string_utils::to_string_null_terminated(&row.name), "wass");
         assert_eq!(
@@ -84,14 +86,14 @@ mod test {
         let mut table = init_test_db();
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
-        let row = statement.execute(&mut table).unwrap();
+        let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 1);
 
         table.close().unwrap();
 
         let mut table = Table::open("./test.db").unwrap();
         let statement = prepare_statement("select 0").unwrap();
-        let row = statement.execute(&mut table).unwrap();
+        let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 1);
         assert_eq!(string_utils::to_string_null_terminated(&row.name), "wass");
         assert_eq!(
@@ -114,7 +116,7 @@ mod test {
         println!("{}", table);
         for i in 0..rows {
             let statement = prepare_statement(&format!("select {}", i)).unwrap();
-            let row = statement.execute(&mut table).unwrap();
+            let row = &statement.execute(&mut table).unwrap()[0];
             assert_eq!(row.id, i);
         }
     }

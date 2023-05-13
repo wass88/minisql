@@ -7,6 +7,7 @@ use crate::table::{Row, Table};
 pub enum Statement {
     Insert(u64, [u8; 32], [u8; 255]),
     Select(u64),
+    SelectAll(),
 }
 
 pub fn prepare_statement(buf: &str) -> Result<Statement, SqlError> {
@@ -32,6 +33,9 @@ pub fn prepare_statement(buf: &str) -> Result<Statement, SqlError> {
     }
     if buf.starts_with("select") {
         let cmds = buf.split(" ").collect::<Vec<&str>>();
+        if cmds.len() == 1 {
+            return Ok(Statement::SelectAll());
+        }
         if cmds.len() != 2 {
             return Err(SqlError::InvalidArgs);
         }
@@ -44,7 +48,7 @@ pub fn prepare_statement(buf: &str) -> Result<Statement, SqlError> {
 }
 
 impl Statement {
-    pub fn execute(&self, table: &mut Table) -> Result<Row, SqlError> {
+    pub fn execute(&self, table: &mut Table) -> Result<Vec<Row>, SqlError> {
         match self {
             Statement::Insert(id, name, email) => {
                 let row = Row {
@@ -58,13 +62,24 @@ impl Statement {
                     return Err(SqlError::DuplicateKey);
                 }
                 cursor.insert(row.id, row.serialize())?;
-                Ok(row)
+                Ok(vec![row])
             }
             Statement::Select(i) => {
                 let cursor = table.find(*i)?;
                 let row = cursor.get()?;
                 let row = Row::deserialize(&row.get_value());
-                Ok(row)
+                Ok(vec![row])
+            }
+            Statement::SelectAll() => {
+                let mut cursor = Cursor::table_start(table)?;
+                let mut rows = Vec::new();
+                while cursor.end_of_table {
+                    let row = cursor.get()?;
+                    let row = Row::deserialize(&row.get_value());
+                    rows.push(row);
+                    cursor.advance();
+                }
+                Ok(rows)
             }
         }
     }
