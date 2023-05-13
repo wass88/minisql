@@ -34,13 +34,6 @@ impl CursorValue {
 }
 
 impl<'a> Cursor<'a> {
-    pub fn table_start(table: &'a mut Table) -> Result<Self, SqlError> {
-        let mut cursor = table.find(0)?;
-        if !cursor.has_cell() {
-            cursor.end_of_table = true;
-        }
-        Ok(cursor)
-    }
     pub fn get(&self) -> Result<CursorValue, SqlError> {
         let node = self.table.pager.node(self.page_num)?;
         Ok(CursorValue {
@@ -142,10 +135,11 @@ impl<'a> Cursor<'a> {
                 };
             }
         }
+        let old_node_next = old_node.get_next_leaf();
         old_node.set_next_leaf(new_page_num);
         old_node.set_num_cells(LEAF_NODE_LEFT_SPLIT_COUNT);
 
-        new_node.set_next_leaf(self.page_num);
+        new_node.set_next_leaf(old_node_next);
         new_node.set_num_cells(LEAF_NODE_RIGHT_SPLIT_COUNT);
         new_node.set_parent(old_node.get_parent());
 
@@ -262,14 +256,14 @@ mod tests {
     #[test]
     fn test_insert() {
         let mut table = init_test_db();
-        let mut cursor = Cursor::table_start(&mut table).unwrap();
+        let mut cursor = table.start().unwrap();
         println!("{}", cursor.table.pager.node(0).unwrap().borrow());
         cursor.insert(1, [1; ROW_SIZE]).unwrap();
         println!("{}", cursor.table.pager.node(0).unwrap().borrow());
         cursor.insert(2, [2; ROW_SIZE]).unwrap();
         println!("{}", cursor.table.pager.node(0).unwrap().borrow());
 
-        let cursor = Cursor::table_start(&mut table).unwrap();
+        let cursor = table.start().unwrap();
         let cursor_value = cursor.get().unwrap();
         assert_eq!(cursor_value.get_key(), 2);
         assert_eq!(cursor_value.get_value().to_vec(), vec![2; ROW_SIZE]);
@@ -278,7 +272,7 @@ mod tests {
     #[test]
     fn test_split() {
         let mut table = init_test_db();
-        let mut cursor = Cursor::table_start(&mut table).unwrap();
+        let mut cursor = table.start().unwrap();
         let skip = 2;
         for i in 0..=LEAF_NODE_MAX_CELLS {
             if i == skip {

@@ -71,9 +71,9 @@ impl Statement {
                 Ok(vec![row])
             }
             Statement::SelectAll() => {
-                let mut cursor = Cursor::table_start(table)?;
+                let mut cursor = table.start()?;
                 let mut rows = Vec::new();
-                while cursor.end_of_table {
+                while !cursor.end_of_table {
                     let row = cursor.get()?;
                     let row = Row::deserialize(&row.get_value());
                     rows.push(row);

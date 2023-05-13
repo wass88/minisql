@@ -71,6 +71,14 @@ impl Table {
         Ok(())
     }
 
+    pub fn start(&mut self) -> Result<Cursor, SqlError> {
+        let mut cursor = self.find(0)?;
+        if !cursor.has_cell() {
+            cursor.end_of_table = true;
+        }
+        Ok(cursor)
+    }
+
     pub fn find(&mut self, key: u64) -> Result<Cursor, SqlError> {
         let root_node = self.pager.node(self.root_page_num)?;
         if root_node.borrow().is_leaf() {
