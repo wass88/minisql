@@ -53,23 +53,17 @@ impl Statement {
                     email: *email,
                 };
                 let mut cursor = table.find(*id as u64)?;
-                if cursor.get()?.get_key() == *id as u64 {
+
+                if cursor.has_cell() && cursor.get()?.get_key() == *id as u64 {
                     return Err(SqlError::DuplicateKey);
                 }
                 cursor.insert(row.id, row.serialize())?;
                 Ok(row)
             }
             Statement::Select(i) => {
-                let mut cursor = Cursor::table_start(table)?;
-                for _ in 0..*i {
-                    if cursor.end_of_table {
-                        return Err(SqlError::EndOfTable);
-                    }
-                    cursor.advance();
-                }
+                let cursor = table.find(*i)?;
                 let row = cursor.get()?;
-                let slot = row.get_value();
-                let row = Row::deserialize(&slot);
+                let row = Row::deserialize(&row.get_value());
                 Ok(row)
             }
         }

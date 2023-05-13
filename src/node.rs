@@ -179,10 +179,17 @@ impl Node {
     }
     // Internal Node: Children
     pub fn set_child_at(&mut self, cell: usize, child: usize) {
+        if cell == self.get_num_cells() {
+            self.set_right_child(child);
+            return;
+        }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
         self.buf[start..start + INTERNAL_NODE_CHILD_SIZE].copy_from_slice(&child.to_le_bytes())
     }
     pub fn get_child_at(&self, cell: usize) -> usize {
+        if cell == self.get_num_cells() {
+            return self.get_right_child();
+        }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
         usize::from_le_bytes(
             self.buf[start..start + INTERNAL_NODE_CHILD_SIZE]
@@ -217,30 +224,30 @@ impl Display for Node {
                 .try_into()
                 .unwrap(),
         );
-        write!(
+        writeln!(
             f,
-            "NodeType: {}, IsRoot: {}, Parent: {}\n",
+            "NodeType: {}, IsRoot: {}, Parent: {}",
             node_type, is_root, parent_page
         )?;
         if self.is_leaf() {
             let num_cells = self.get_num_cells();
-            write!(f, "NumCells: {}\n", num_cells)?;
+            writeln!(f, "NumCells: {}", num_cells)?;
             for i in 0..num_cells as usize {
                 let key = self.get_key(i);
                 let value = self.get_value(i);
                 let row = Row::deserialize(value);
-                write!(f, "Key: {}, Value: {}\n", key, row)?;
+                writeln!(f, "- Key: {}, Value: {}", key, row)?;
             }
         } else {
             let num_keys = self.get_num_keys();
-            write!(f, "NumKeys: {}\n", num_keys)?;
+            writeln!(f, "NumKeys: {}", num_keys)?;
             let right_child = self.get_right_child();
-            write!(f, "RightChild: {}\n", right_child)?;
             for i in 0..num_keys as usize {
                 let child = self.get_child_at(i);
                 let key = self.get_key_at(i);
-                write!(f, "Key: {}, Child: {}\n", key, child)?;
+                writeln!(f, "- Key: {}, Child: {}", key, child)?;
             }
+            writeln!(f, "- RightChild: {}", right_child)?;
         }
         Ok(())
     }
@@ -284,5 +291,6 @@ mod tests {
         assert_eq!(node.get_child_at(0), 2);
         node.set_right_child(3);
         assert_eq!(node.get_right_child(), 3);
+        assert_eq!(node.get_child_at(1), 3);
     }
 }

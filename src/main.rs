@@ -47,7 +47,7 @@ fn meta_command(buf: &str, table: &mut Table) -> Result<(), SqlError> {
             std::process::exit(0);
         }
         ".btree" => {
-            print_table(table, table.root_page_num);
+            println!("{}", table);
             return Ok(());
         }
         _ => {
@@ -55,18 +55,6 @@ fn meta_command(buf: &str, table: &mut Table) -> Result<(), SqlError> {
         }
     }
 }
-
-fn print_table(table: &Table, node_num: usize) {
-    let node = table.pager.node(node_num).unwrap();
-    let node = node.borrow();
-    print!("{}", node);
-    if node.is_internal() {
-        for i in 0..node.get_num_keys() {
-            print_table(table, node.get_child_at(i));
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -123,6 +111,7 @@ mod test {
         table.close().unwrap();
 
         let mut table = Table::open("./test.db").unwrap();
+        println!("{}", table);
         for i in 0..rows {
             let statement = prepare_statement(&format!("select {}", i)).unwrap();
             let row = statement.execute(&mut table).unwrap();

@@ -48,6 +48,11 @@ impl<'a> Cursor<'a> {
     pub fn advance(&mut self) {
         self.cell_num += 1;
     }
+    pub fn has_cell(&self) -> bool {
+        let node = self.table.pager.node(self.page_num).unwrap();
+        let node = node.borrow();
+        self.cell_num < node.get_num_cells()
+    }
     pub fn insert(&mut self, key: u64, value: [u8; ROW_SIZE]) -> Result<(), SqlError> {
         let num_cells = self
             .table

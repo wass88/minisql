@@ -76,7 +76,33 @@ impl Table {
         if root_node.borrow().is_leaf() {
             self.find_leaf(self.root_page_num, key)
         } else {
-            unimplemented!()
+            self.find_internal(self.root_page_num, key)
+        }
+    }
+    pub fn find_internal(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
+        let node = self.pager.node(page_num)?;
+        let node = node.borrow();
+        let num_keys = node.get_num_cells();
+        let mut min_index = 0usize;
+        let mut max_index = num_keys;
+        while min_index < max_index {
+            let index = (min_index + max_index) / 2;
+            let key_at_index = node.get_key(index);
+            if key < key_at_index {
+                max_index = index;
+            } else {
+                min_index = index + 1;
+            }
+        }
+        let child = node.get_child_at(min_index);
+        let child_node = self.pager.node(child)?;
+        drop(node);
+        if child_node.borrow().is_leaf() {
+            drop(child_node);
+            self.find_leaf(child, key)
+        } else {
+            drop(child_node);
+            self.find_internal(child, key)
         }
     }
     pub fn find_leaf(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
@@ -106,5 +132,24 @@ impl Table {
             cell_num: min_cell,
             end_of_table: false,
         })
+    }
+}
+
+impl Display for Table {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        fn print_table(f: &mut Formatter<'_>, table: &Table, node_num: usize) -> std::fmt::Result {
+            let node = table.pager.node(node_num).unwrap();
+            let node = node.borrow();
+            write!(f, "Node[{}] {}", node_num, node)?;
+            if node.is_internal() {
+                for i in 0..=node.get_num_keys() {
+                    print_table(f, table, node.get_child_at(i))?;
+                }
+            }
+            Ok(())
+        }
+        writeln!(f, "Table {{ root_page_num: {} }}", self.root_page_num)?;
+        print_table(f, self, self.root_page_num)?;
+        Ok(())
     }
 }
