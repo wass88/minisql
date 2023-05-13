@@ -8,4 +8,5 @@ pub enum SqlError {
     TableFull,
     EndOfTable,
     CorruptFile,
+    DuplicateKey,
 }

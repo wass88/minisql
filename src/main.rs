@@ -1,6 +1,6 @@
-mod b_tree;
 mod commands;
 mod cursor;
+mod node;
 mod pager;
 mod sql_error;
 mod string_utils;
@@ -47,11 +47,22 @@ fn meta_command(buf: &str, table: &mut Table) -> Result<(), SqlError> {
             std::process::exit(0);
         }
         ".btree" => {
-            print!("{}", table.pager.node(0)?);
+            print_table(table, table.root_page_num);
             return Ok(());
         }
         _ => {
             return Err(SqlError::UnknownCommand(buf.to_string()));
+        }
+    }
+}
+
+fn print_table(table: &Table, node_num: usize) {
+    let node = table.pager.node(node_num).unwrap();
+    let node = node.borrow();
+    print!("{}", node);
+    if node.is_internal() {
+        for i in 0..node.get_num_keys() {
+            print_table(table, node.get_child_at(i));
         }
     }
 }
@@ -65,16 +76,15 @@ mod test {
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
         let row = statement.execute(&mut table).unwrap();
-        assert_eq!(row.id, 0);
-
-        let statement = prepare_statement("insert 21 nnna nnna@example.com").unwrap();
-        let row = statement.execute(&mut table).unwrap();
         assert_eq!(row.id, 1);
 
-        let statement = prepare_statement("select 0").unwrap();
+        let statement = prepare_statement("insert 2 nnna nnna@example.com").unwrap();
         let row = statement.execute(&mut table).unwrap();
-        assert_eq!(row.id, 0);
-        assert_eq!(row.age, 1);
+        assert_eq!(row.id, 2);
+
+        let statement = prepare_statement("select 1").unwrap();
+        let row = statement.execute(&mut table).unwrap();
+        assert_eq!(row.id, 1);
         assert_eq!(string_utils::to_string_null_terminated(&row.name), "wass");
         assert_eq!(
             string_utils::to_string_null_terminated(&row.email),
@@ -87,15 +97,14 @@ mod test {
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
         let row = statement.execute(&mut table).unwrap();
-        assert_eq!(row.id, 0);
+        assert_eq!(row.id, 1);
 
         table.close().unwrap();
 
         let mut table = Table::open("./test.db").unwrap();
         let statement = prepare_statement("select 0").unwrap();
         let row = statement.execute(&mut table).unwrap();
-        assert_eq!(row.id, 0);
-        assert_eq!(row.age, 1);
+        assert_eq!(row.id, 1);
         assert_eq!(string_utils::to_string_null_terminated(&row.name), "wass");
         assert_eq!(
             string_utils::to_string_null_terminated(&row.email),
@@ -117,10 +126,10 @@ mod test {
         for i in 0..rows {
             let statement = prepare_statement(&format!("select {}", i)).unwrap();
             let row = statement.execute(&mut table).unwrap();
-            assert_eq!(row.age, i);
+            assert_eq!(row.id, i);
         }
     }
-    fn init_test_db() -> Table {
+    pub fn init_test_db() -> Table {
         match std::fs::remove_file("./test.db") {
             Ok(_) => {}
             Err(_) => {}
