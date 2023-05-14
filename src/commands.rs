@@ -1,4 +1,3 @@
-use crate::cursor::Cursor;
 use crate::sql_error::SqlError;
 use crate::string_utils::copy_null_terminated;
 use crate::table::{Row, Table};

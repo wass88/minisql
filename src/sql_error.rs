@@ -6,7 +6,6 @@ pub enum SqlError {
     NotNumber(String),
     IOError(std::io::Error, String),
     TableFull,
-    EndOfTable,
     CorruptFile,
     DuplicateKey,
 }

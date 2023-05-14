@@ -35,10 +35,13 @@ const LEAF_NODE_HEADER_SIZE: usize =
 // LEAF NODE BODY
 //  {NODE_KEY, NODE_VALUE}...
 const LEAF_NODE_KEY_SIZE: usize = 8;
+#[allow(dead_code)]
 const LEAF_NODE_KEY_OFFSET: usize = 0;
 const LEAF_NODE_VALUE_SIZE: usize = ROW_SIZE;
+#[allow(dead_code)]
 const LEAF_NODE_VALUE_OFFSET: usize = LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZE;
 const LEAF_NODE_CELL_SIZE: usize = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
+#[allow(dead_code)]
 const LEAF_NODE_SPACE_FOR_CELLS: usize = PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
 // pub const LEAF_NODE_MAX_CELLS: usize = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
 pub const LEAF_NODE_MAX_CELLS: usize = 4; // DEBUG: 4 for testing

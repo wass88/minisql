@@ -7,11 +7,9 @@ use crate::{
     sql_error::SqlError,
     table::{Table, ROW_SIZE},
 };
-use core::num;
 use std::{
     cell::{RefCell, RefMut},
     rc::Rc,
-    unimplemented,
 };
 
 pub struct Cursor<'a> {
@@ -353,55 +351,6 @@ impl<'a> Cursor<'a> {
         drop(new_node);
 
         self.update_parent(old_is_root, parent_num, old_max, new_max, new_node_num)
-    }
-
-    fn create_new_internal_root(
-        &mut self,
-        left_key: u64,
-        right_child_num: usize,
-    ) -> Result<(), SqlError> {
-        let root_num = self.table.root_page_num;
-        let root = self.table.pager.node(root_num)?;
-        let mut root = root.borrow_mut();
-        let left_child_num = self.table.pager.new_page_num();
-        let left_child = self.table.pager.node(left_child_num)?;
-        let mut left_child = left_child.borrow_mut();
-        let right_child = self.table.pager.node(right_child_num)?;
-        let mut right_child = right_child.borrow_mut();
-
-        left_child.buf.copy_from_slice(&root.buf);
-
-        root.set_num_keys(1);
-        root.set_key_at(0, left_key);
-        root.set_child_at(0, left_child_num);
-        root.set_right_child(right_child_num);
-
-        left_child.set_parent(root_num);
-        right_child.set_parent(root_num);
-
-        left_child.set_next_internal(right_child_num);
-        right_child.set_next_internal(0); // No next internal node
-
-        println!(
-            "root: {}, left: {}, right: {}",
-            root_num, left_child_num, right_child_num
-        );
-        println!("{}", left_child);
-        for i in 0..=left_child.get_num_keys() {
-            let child_num = left_child.get_child_at(i);
-            let child = self.table.pager.node(child_num)?;
-            let mut child = child.borrow_mut();
-            child.set_parent(left_child_num);
-        }
-        println!("{}", right_child);
-        for i in 0..=right_child.get_num_keys() {
-            let child_num = right_child.get_child_at(i);
-            let child = self.table.pager.node(child_num)?;
-            let mut child = child.borrow_mut();
-            child.set_parent(right_child_num);
-        }
-
-        Ok(())
     }
 }
 
