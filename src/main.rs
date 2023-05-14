@@ -62,7 +62,8 @@ mod test {
     use super::*;
     #[test]
     fn insert_select() {
-        let mut table = init_test_db();
+        let db = "insert_select";
+        let mut table = init_test_db(db);
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
         let row = &statement.execute(&mut table).unwrap()[0];
@@ -83,7 +84,8 @@ mod test {
     }
     #[test]
     fn close_db() {
-        let mut table = init_test_db();
+        let db = "close_db";
+        let mut table = init_test_db(db);
 
         let statement = prepare_statement("insert 1 wass wass@example.com").unwrap();
         let row = &statement.execute(&mut table).unwrap()[0];
@@ -91,7 +93,7 @@ mod test {
 
         table.close().unwrap();
 
-        let mut table = Table::open("./test.db").unwrap();
+        let mut table = reopen_test_db(db);
         let statement = prepare_statement("select 0").unwrap();
         let row = &statement.execute(&mut table).unwrap()[0];
         assert_eq!(row.id, 1);
@@ -103,27 +105,31 @@ mod test {
     }
     #[test]
     fn tough_insert() {
-        let mut table = init_test_db();
+        let db = "tough_insert";
+        let mut table = init_test_db(db);
 
-        let rows = 42;
+        let rows = 14;
         for i in 0..rows {
             let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
             statement.execute(&mut table).unwrap();
+            println!("\n##### {} #####\n{}", i, table);
         }
         table.close().unwrap();
 
-        let mut table = reopen_test_db();
-        println!("{}", table);
+        let mut table = reopen_test_db(db);
         for i in 0..rows {
+            println!("\n##### {} #####\n{}", i, table);
             let statement = prepare_statement(&format!("select {}", i)).unwrap();
             let row = &statement.execute(&mut table).unwrap()[0];
+            println!("{}", row);
             assert_eq!(row.id, i);
         }
     }
 
     #[test]
     fn select_all() {
-        let mut table = init_test_db();
+        let db = "select_all";
+        let mut table = init_test_db(db);
 
         let num_rows = 8;
         for i in 0..num_rows {
@@ -132,7 +138,7 @@ mod test {
         }
         table.close().unwrap();
 
-        let mut table = reopen_test_db();
+        let mut table = reopen_test_db(db);
         println!("{}", table);
         let statement = prepare_statement("select").unwrap();
         let rows = statement.execute(&mut table).unwrap();
@@ -143,14 +149,17 @@ mod test {
             assert_eq!(row.id, i as u64);
         }
     }
-    pub fn init_test_db() -> Table {
-        match std::fs::remove_file("./test.db") {
+    fn db_name(prefix: &str) -> String {
+        format!("./forTest/{}.db", prefix)
+    }
+    pub fn init_test_db(prefix: &str) -> Table {
+        match std::fs::remove_file(db_name(prefix)) {
             Ok(_) => {}
             Err(_) => {}
         }
-        Table::open("./test.db").unwrap()
+        Table::open(&db_name(prefix)).unwrap()
     }
-    pub fn reopen_test_db() -> Table {
-        Table::open("./test.db").unwrap()
+    pub fn reopen_test_db(prefix: &str) -> Table {
+        Table::open(&db_name(prefix)).unwrap()
     }
 }

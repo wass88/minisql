@@ -49,8 +49,13 @@ const INTERNAL_NODE_NUM_KEYS_OFFSET: usize = COMMON_NODE_HEADER_SIZE;
 const INTERNAL_NODE_RIGHT_CHILD_SIZE: usize = POINTER_SIZE;
 const INTERNAL_NODE_RIGHT_CHILD_OFFSET: usize =
     INTERNAL_NODE_NUM_KEYS_OFFSET + INTERNAL_NODE_NUM_KEYS_SIZE;
-const INTERNAL_NODE_HEADER_SIZE: usize =
-    COMMON_NODE_HEADER_SIZE + INTERNAL_NODE_NUM_KEYS_SIZE + INTERNAL_NODE_RIGHT_CHILD_SIZE;
+const INTERNAL_NODE_NEXT_INTERNAL_OFFSET: usize =
+    INTERNAL_NODE_RIGHT_CHILD_OFFSET + INTERNAL_NODE_RIGHT_CHILD_SIZE;
+const INTERNAL_NODE_NEXT_INTERNAL_SIZE: usize = POINTER_SIZE;
+const INTERNAL_NODE_HEADER_SIZE: usize = COMMON_NODE_HEADER_SIZE
+    + INTERNAL_NODE_NUM_KEYS_SIZE
+    + INTERNAL_NODE_RIGHT_CHILD_SIZE
+    + INTERNAL_NODE_NEXT_INTERNAL_SIZE;
 
 // INTERNAL NODE BODY
 //   {INTERNAL_NODE_CHILD, INTERNAL_NODE_KEY}...
@@ -62,6 +67,10 @@ pub const INTERNAL_NODE_MAX_CELLS: usize = 3; // DEBUG: 3 for testing
 // Node Splitting
 pub const LEAF_NODE_LEFT_SPLIT_COUNT: usize = (LEAF_NODE_MAX_CELLS + 1) / 2;
 pub const LEAF_NODE_RIGHT_SPLIT_COUNT: usize = LEAF_NODE_MAX_CELLS + 1 - LEAF_NODE_LEFT_SPLIT_COUNT;
+
+pub const INTERNAL_NODE_LEFT_SPLIT_COUNT: usize = (INTERNAL_NODE_MAX_CELLS + 1) / 2;
+pub const INTERNAL_NODE_RIGHT_SPLIT_COUNT: usize =
+    INTERNAL_NODE_MAX_CELLS - INTERNAL_NODE_LEFT_SPLIT_COUNT;
 
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -164,12 +173,12 @@ impl Node {
     pub fn init_internal(&mut self) {
         self.buf[NODE_TYPE_OFFSET] = NodeType::Internal as u8;
         self.set_root(false);
-        self.set_num_keys(0);
     }
     pub fn is_internal(&self) -> bool {
         self.buf[NODE_TYPE_OFFSET] == NodeType::Internal as u8
     }
     pub fn set_num_keys(&mut self, num_keys: usize) {
+        assert!(num_keys > 0);
         self.buf[INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
             .copy_from_slice(&num_keys.to_le_bytes())
     }
@@ -189,6 +198,21 @@ impl Node {
     pub fn get_right_child(&self) -> usize {
         usize::from_le_bytes(
             self.buf[INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        )
+    }
+
+    // Internal Node: Next Internal
+    pub fn set_next_internal(&mut self, next_internal: usize) {
+        self.buf[INTERNAL_NODE_NEXT_INTERNAL_OFFSET
+            ..INTERNAL_NODE_NEXT_INTERNAL_OFFSET + INTERNAL_NODE_NEXT_INTERNAL_SIZE]
+            .copy_from_slice(&next_internal.to_le_bytes())
+    }
+    pub fn get_next_internal(&self) -> usize {
+        usize::from_le_bytes(
+            self.buf[INTERNAL_NODE_NEXT_INTERNAL_OFFSET
+                ..INTERNAL_NODE_NEXT_INTERNAL_OFFSET + INTERNAL_NODE_NEXT_INTERNAL_SIZE]
                 .try_into()
                 .unwrap(),
         )
@@ -274,7 +298,7 @@ impl Display for Node {
                 .try_into()
                 .unwrap(),
         );
-        writeln!(
+        write!(
             f,
             "NodeType: {}, IsRoot: {}, Parent: {}",
             node_type, is_root, parent_page
@@ -283,7 +307,7 @@ impl Display for Node {
             let num_cells = self.get_num_cells();
             writeln!(
                 f,
-                "  NumCells: {}, NextLeaf {}",
+                " ( NumCells: {}, NextLeaf {} ) ",
                 num_cells,
                 self.get_next_leaf()
             )?;
@@ -291,18 +315,23 @@ impl Display for Node {
                 let key = self.get_key(i);
                 let value = self.get_value(i);
                 let row = Row::deserialize(value);
-                writeln!(f, "- Key: {}, Value: {}", key, row)?;
+                writeln!(f, "[{}] {}", key, row)?;
             }
         } else {
             let num_keys = self.get_num_keys();
-            writeln!(f, "  NumKeys: {}", num_keys)?;
+            let next_internal = self.get_next_internal();
+            writeln!(
+                f,
+                " ( NumKeys: {}, NextInternal:{} )",
+                num_keys, next_internal
+            )?;
             let right_child = self.get_right_child();
             for i in 0..num_keys as usize {
                 let child = self.get_child_at(i);
                 let key = self.get_key_at(i);
-                writeln!(f, "- Key: {}, Child: {}", key, child)?;
+                write!(f, "{} [{}] ", child, key)?;
             }
-            writeln!(f, "- RightChild: {}", right_child)?;
+            writeln!(f, "{}", right_child)?;
         }
         Ok(())
     }
@@ -349,5 +378,7 @@ mod tests {
         node.set_right_child(3);
         assert_eq!(node.get_right_child(), 3);
         assert_eq!(node.get_child_at(1), 3);
+        node.set_next_internal(2);
+        assert_eq!(node.get_next_internal(), 2);
     }
 }

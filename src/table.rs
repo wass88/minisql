@@ -1,7 +1,10 @@
 use crate::{
     cursor::Cursor, pager::Pager, sql_error::SqlError, string_utils::to_string_null_terminated,
 };
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    write,
+};
 
 #[derive(Debug)]
 pub struct Row {
@@ -90,19 +93,20 @@ impl Table {
     pub fn find_internal(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
         let node = self.pager.node(page_num)?;
         let node = node.borrow();
-        let num_keys = node.get_num_cells();
+        let num_keys = node.get_num_keys();
         let mut min_index = 0usize;
         let mut max_index = num_keys;
         while min_index < max_index {
             let index = (min_index + max_index) / 2;
-            let key_at_index = node.get_key(index);
-            if key < key_at_index {
+            let key_at_index = node.get_key_at(index);
+            if key_at_index >= key {
                 max_index = index;
             } else {
                 min_index = index + 1;
             }
         }
-        let child = node.get_child_at(min_index);
+        println!("Find internal index: {} by {}", max_index, key);
+        let child = node.get_child_at(max_index);
         let child_node = self.pager.node(child)?;
         drop(node);
         if child_node.borrow().is_leaf() {
@@ -120,24 +124,22 @@ impl Table {
         while min_cell < max_cell {
             let mid_cell = (min_cell + max_cell) / 2;
             let mid_key = node.borrow().get_key(mid_cell);
-            if key == mid_key {
-                return Ok(Cursor {
-                    table: self,
-                    page_num,
-                    cell_num: mid_cell,
-                    end_of_table: false,
-                });
-            }
-            if key < mid_key {
+            if mid_key >= key {
                 max_cell = mid_cell;
             } else {
                 min_cell = mid_cell + 1;
             }
         }
+        println!(
+            "Find leaf cell: {}, value={} by {}",
+            max_cell,
+            node.borrow().get_key(max_cell),
+            key
+        );
         Ok(Cursor {
             table: self,
             page_num,
-            cell_num: min_cell,
+            cell_num: max_cell,
             end_of_table: false,
         })
     }
@@ -145,19 +147,45 @@ impl Table {
 
 impl Display for Table {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        fn print_table(f: &mut Formatter<'_>, table: &Table, node_num: usize) -> std::fmt::Result {
+        fn indent(buf: &str, indent_size: usize) -> String {
+            let mut buf = buf.to_owned();
+            let indent = " ".repeat(indent_size);
+            if buf.ends_with("\n") {
+                buf.pop();
+            }
+            format!(
+                "{}{}\n",
+                indent,
+                buf.replace("\n", &format!("\n{}", indent))
+            )
+        }
+        fn print_table(
+            f: &mut Formatter<'_>,
+            table: &Table,
+            node_num: usize,
+            visited: &mut Vec<bool>,
+            indent_size: usize,
+        ) -> std::fmt::Result {
+            if visited[node_num] {
+                write!(f, "Node[{}] <visited>\n", node_num)?;
+                return Ok(());
+            }
+            visited[node_num] = true;
             let node = table.pager.node(node_num).unwrap();
             let node = node.borrow();
-            write!(f, "Node[{}] {}", node_num, node)?;
+            let buf = format!("Node {} {}", node_num, node);
+            let buf = indent(&buf, indent_size);
+            write!(f, "{}", buf)?;
             if node.is_internal() {
                 for i in 0..=node.get_num_keys() {
-                    print_table(f, table, node.get_child_at(i))?;
+                    print_table(f, table, node.get_child_at(i), visited, indent_size + 2)?;
                 }
             }
             Ok(())
         }
         writeln!(f, "Table {{ root_page_num: {} }}", self.root_page_num)?;
-        print_table(f, self, self.root_page_num)?;
+        let mut visited = vec![false; self.pager.num_pages.get()];
+        print_table(f, self, self.root_page_num, &mut visited, 0)?;
         Ok(())
     }
 }
