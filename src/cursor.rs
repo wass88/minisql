@@ -70,13 +70,11 @@ impl<'a> Cursor<'a> {
         if num_cells >= LEAF_NODE_MAX_CELLS {
             return self.split_and_insert(key, value);
         }
-        if self.cell_num < num_cells {
-            for i in self.cell_num..num_cells {
-                let node = self.table.pager.node(self.page_num)?;
-                let mut node = node.borrow_mut();
-                let cell = node.cell(i).to_owned(); // TODO Slow own
-                node.cell(i + 1).copy_from_slice(&cell);
-            }
+        for i in (self.cell_num..num_cells).rev() {
+            let node = self.table.pager.node(self.page_num)?;
+            let mut node = node.borrow_mut();
+            let cell = node.cell(i).to_owned(); // TODO Slow own
+            node.cell(i + 1).copy_from_slice(&cell);
         }
         let node = self.table.pager.node(self.page_num)?;
         let mut node = node.borrow_mut();

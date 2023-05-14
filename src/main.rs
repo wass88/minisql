@@ -131,7 +131,7 @@ mod test {
         let db = "select_all";
         let mut table = init_test_db(db);
 
-        let num_rows = 8;
+        let num_rows = 12;
         for i in 0..num_rows {
             let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
             statement.execute(&mut table).unwrap();
@@ -149,6 +149,25 @@ mod test {
             assert_eq!(row.id, i as u64);
         }
     }
+
+    #[test]
+    fn random_insert() {
+        let db = "random_insert";
+        let mut table = init_test_db(db);
+        let order = vec![9, 17, 3, 2, 6, 8, 11, 1, 7, 21, 4, 15, 12, 14, 20, 13];
+        for i in &order {
+            let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
+            statement.execute(&mut table).unwrap();
+            println!("##### {} #####\n{}", i, table);
+        }
+
+        for i in &order {
+            let statement = prepare_statement(&format!("select {}", i)).unwrap();
+            let row = &statement.execute(&mut table).unwrap()[0];
+            assert_eq!(row.id, *i);
+        }
+    }
+
     fn db_name(prefix: &str) -> String {
         format!("./forTest/{}.db", prefix)
     }

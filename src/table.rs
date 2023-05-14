@@ -105,7 +105,6 @@ impl Table {
                 min_index = index + 1;
             }
         }
-        println!("Find internal index: {} by {}", max_index, key);
         let child = node.get_child_at(max_index);
         let child_node = self.pager.node(child)?;
         drop(node);
@@ -130,12 +129,6 @@ impl Table {
                 min_cell = mid_cell + 1;
             }
         }
-        println!(
-            "Find leaf cell: {}, value={} by {}",
-            max_cell,
-            node.borrow().get_key(max_cell),
-            key
-        );
         Ok(Cursor {
             table: self,
             page_num,
