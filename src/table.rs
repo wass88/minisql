@@ -1,5 +1,6 @@
 use crate::{
-    cursor::Cursor, pager::Pager, sql_error::SqlError, string_utils::to_string_null_terminated,
+    cursor::Cursor, node::NodeRef, pager::Pager, sql_error::SqlError,
+    string_utils::to_string_null_terminated,
 };
 use std::{
     fmt::{Display, Formatter},
@@ -93,6 +94,7 @@ impl Table {
     pub fn find_internal(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
         let node = self.pager.node(page_num)?;
         let node = node.borrow();
+        let node = node.internal_node();
         let num_keys = node.get_num_keys();
         let mut min_index = 0usize;
         let mut max_index = num_keys;
@@ -119,10 +121,10 @@ impl Table {
     pub fn find_leaf(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
         let node = self.pager.node(page_num)?;
         let mut min_cell = 0usize;
-        let mut max_cell = node.borrow().get_num_cells() as usize;
+        let mut max_cell = node.borrow().leaf_node().get_num_cells() as usize;
         while min_cell < max_cell {
             let mid_cell = (min_cell + max_cell) / 2;
-            let mid_key = node.borrow().get_key(mid_cell);
+            let mid_key = node.borrow().leaf_node().get_key(mid_cell);
             if mid_key >= key {
                 max_cell = mid_cell;
             } else {
@@ -169,9 +171,9 @@ impl Display for Table {
             let buf = format!("Node {} {}", node_num, node);
             let buf = indent(&buf, indent_size);
             write!(f, "{}", buf)?;
-            if node.is_internal() {
-                for i in 0..=node.get_num_keys() {
-                    print_table(f, table, node.get_child_at(i), visited, indent_size + 2)?;
+            if let NodeRef::Internal(internal) = node.as_typed() {
+                for i in 0..=internal.get_num_keys() {
+                    print_table(f, table, internal.get_child_at(i), visited, indent_size + 2)?;
                 }
             }
             Ok(())

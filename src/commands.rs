@@ -66,7 +66,7 @@ impl Statement {
             Statement::Select(i) => {
                 let cursor = table.find(*i)?;
                 let row = cursor.get()?;
-                let row = Row::deserialize(&row.get_value());
+                let row = row.get_value(|v| Row::deserialize(v));
                 Ok(vec![row])
             }
             Statement::SelectAll() => {
@@ -74,7 +74,7 @@ impl Statement {
                 let mut rows = Vec::new();
                 while !cursor.end_of_table {
                     let row = cursor.get()?;
-                    let row = Row::deserialize(&row.get_value());
+                    let row = row.get_value(|v| Row::deserialize(v));
                     rows.push(row);
                     cursor.advance();
                 }
