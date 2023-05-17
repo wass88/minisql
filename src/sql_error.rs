@@ -8,4 +8,7 @@ pub enum SqlError {
     TableFull,
     CorruptFile,
     DuplicateKey,
+    NoData,
 }
+
+pub type SqlResult<T> = Result<T, SqlError>;

@@ -7,7 +7,7 @@ mod string_utils;
 mod table;
 
 use commands::*;
-use sql_error::SqlError;
+use sql_error::{SqlError, SqlResult};
 use table::Table;
 
 fn main() {
@@ -30,7 +30,7 @@ fn main() {
     }
 }
 
-fn exec_buf(buf: &str, table: &mut Table) -> Result<(), SqlError> {
+fn exec_buf(buf: &str, table: &mut Table) -> SqlResult<()> {
     if buf.starts_with(".") {
         return meta_command(buf, table);
     }
@@ -42,7 +42,7 @@ fn exec_buf(buf: &str, table: &mut Table) -> Result<(), SqlError> {
     Ok(())
 }
 
-fn meta_command(buf: &str, table: &mut Table) -> Result<(), SqlError> {
+fn meta_command(buf: &str, table: &mut Table) -> SqlResult<()> {
     match buf {
         ".exit" => {
             table.close()?;

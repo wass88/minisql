@@ -1,4 +1,4 @@
-use crate::sql_error::SqlError;
+use crate::sql_error::{SqlError, SqlResult};
 use crate::string_utils::copy_null_terminated;
 use crate::table::{Row, Table};
 
@@ -9,7 +9,7 @@ pub enum Statement {
     SelectAll(),
 }
 
-pub fn prepare_statement(buf: &str) -> Result<Statement, SqlError> {
+pub fn prepare_statement(buf: &str) -> SqlResult<Statement> {
     if buf.starts_with("insert") {
         let cmds = buf.split(" ").collect::<Vec<&str>>();
         if cmds.len() != 4 {
@@ -47,7 +47,7 @@ pub fn prepare_statement(buf: &str) -> Result<Statement, SqlError> {
 }
 
 impl Statement {
-    pub fn execute(&self, table: &mut Table) -> Result<Vec<Row>, SqlError> {
+    pub fn execute(&self, table: &mut Table) -> SqlResult<Vec<Row>> {
         match self {
             Statement::Insert(id, name, email) => {
                 let row = Row {
@@ -57,7 +57,7 @@ impl Statement {
                 };
                 let mut cursor = table.find(*id as u64)?;
 
-                if cursor.has_cell() && cursor.get()?.get_key() == *id as u64 {
+                if cursor.has_cell()? && cursor.get()?.get_key() == *id as u64 {
                     return Err(SqlError::DuplicateKey);
                 }
                 cursor.insert(row.id, row.serialize())?;
@@ -66,7 +66,7 @@ impl Statement {
             Statement::Select(i) => {
                 let cursor = table.find(*i)?;
                 let row = cursor.get()?;
-                let row = row.get_value(|v| Row::deserialize(v));
+                let row = Row::deserialize(&row.get_value());
                 Ok(vec![row])
             }
             Statement::SelectAll() => {
@@ -74,9 +74,9 @@ impl Statement {
                 let mut rows = Vec::new();
                 while !cursor.end_of_table {
                     let row = cursor.get()?;
-                    let row = row.get_value(|v| Row::deserialize(v));
+                    let row = Row::deserialize(&row.get_value());
                     rows.push(row);
-                    cursor.advance();
+                    cursor.advance()?;
                 }
                 Ok(rows)
             }

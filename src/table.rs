@@ -1,5 +1,8 @@
 use crate::{
-    cursor::Cursor, node::NodeRef, pager::Pager, sql_error::SqlError,
+    cursor::Cursor,
+    node::{InternalMut, InternalRef, LeafMut, LeafRef, NodeRef, NodeType},
+    pager::Pager,
+    sql_error::SqlResult,
     string_utils::to_string_null_terminated,
 };
 use std::{
@@ -57,14 +60,14 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn open(filename: &str) -> Result<Self, SqlError> {
+    pub fn open(filename: &str) -> SqlResult<Self> {
         Ok(Table {
             pager: Pager::open(filename)?,
             root_page_num: 0,
         })
     }
 
-    pub fn close(&mut self) -> Result<(), SqlError> {
+    pub fn close(&mut self) -> SqlResult<()> {
         for i in 0..self.pager.num_pages.get() {
             if self.pager.pages.borrow()[i].is_none() {
                 continue;
@@ -75,26 +78,23 @@ impl Table {
         Ok(())
     }
 
-    pub fn start(&mut self) -> Result<Cursor, SqlError> {
+    pub fn start(&mut self) -> SqlResult<Cursor> {
         let mut cursor = self.find(0)?;
-        if !cursor.has_cell() {
+        if !cursor.has_cell()? {
             cursor.end_of_table = true;
         }
         Ok(cursor)
     }
 
-    pub fn find(&mut self, key: u64) -> Result<Cursor, SqlError> {
+    pub fn find(&mut self, key: u64) -> SqlResult<Cursor> {
         let root_node = self.pager.node(self.root_page_num)?;
-        if root_node.borrow().is_leaf() {
-            self.find_leaf(self.root_page_num, key)
-        } else {
-            self.find_internal(self.root_page_num, key)
+        match root_node.get_type() {
+            NodeType::Leaf => self.find_leaf(self.root_page_num, key),
+            NodeType::Internal => self.find_internal(self.root_page_num, key),
         }
     }
-    pub fn find_internal(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
-        let node = self.pager.node(page_num)?;
-        let node = node.borrow();
-        let node = node.internal_node();
+    pub fn find_internal(&mut self, page_num: usize, key: u64) -> SqlResult<Cursor> {
+        let node = self.internal_mut(page_num)?;
         let num_keys = node.get_num_keys();
         let mut min_index = 0usize;
         let mut max_index = num_keys;
@@ -109,22 +109,18 @@ impl Table {
         }
         let child = node.get_child_at(max_index);
         let child_node = self.pager.node(child)?;
-        drop(node);
-        if child_node.borrow().is_leaf() {
-            drop(child_node);
-            self.find_leaf(child, key)
-        } else {
-            drop(child_node);
-            self.find_internal(child, key)
+        match child_node.get_type() {
+            NodeType::Leaf => self.find_leaf(child, key),
+            NodeType::Internal => self.find_internal(child, key),
         }
     }
-    pub fn find_leaf(&mut self, page_num: usize, key: u64) -> Result<Cursor, SqlError> {
-        let node = self.pager.node(page_num)?;
+    pub fn find_leaf(&mut self, page_num: usize, key: u64) -> SqlResult<Cursor> {
+        let node = self.leaf_ref(page_num)?;
         let mut min_cell = 0usize;
-        let mut max_cell = node.borrow().leaf_node().get_num_cells() as usize;
+        let mut max_cell = node.get_num_cells() as usize;
         while min_cell < max_cell {
             let mid_cell = (min_cell + max_cell) / 2;
-            let mid_key = node.borrow().leaf_node().get_key(mid_cell);
+            let mid_key = node.get_key(mid_cell);
             if mid_key >= key {
                 max_cell = mid_cell;
             } else {
@@ -137,6 +133,23 @@ impl Table {
             cell_num: max_cell,
             end_of_table: false,
         })
+    }
+
+    pub fn internal_mut(&self, page_num: usize) -> SqlResult<InternalMut> {
+        let node = self.pager.node(page_num)?;
+        Ok(node.internal_node_mut())
+    }
+    pub fn leaf_mut(&self, page_num: usize) -> SqlResult<LeafMut> {
+        let node = self.pager.node(page_num)?;
+        Ok(node.leaf_node_mut())
+    }
+    pub fn leaf_ref(&self, page_num: usize) -> SqlResult<LeafRef> {
+        let node = self.pager.node(page_num)?;
+        Ok(node.leaf_node())
+    }
+    pub fn internal_ref(&self, page_num: usize) -> SqlResult<InternalRef> {
+        let node = self.pager.node(page_num)?;
+        Ok(node.internal_node())
     }
 }
 
@@ -167,7 +180,6 @@ impl Display for Table {
             }
             visited[node_num] = true;
             let node = table.pager.node(node_num).unwrap();
-            let node = node.borrow();
             let buf = format!("Node {} {}", node_num, node);
             let buf = indent(&buf, indent_size);
             write!(f, "{}", buf)?;

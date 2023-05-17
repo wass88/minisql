@@ -1,7 +1,11 @@
-use std::fmt::Display;
+use std::{
+    cell::{Ref, RefMut},
+    fmt::Display,
+    ops::Deref,
+};
 
 use crate::{
-    pager::PAGE_SIZE,
+    pager::{Page, PageBuffer, PAGE_SIZE},
     table::{Row, ROW_SIZE},
 };
 
@@ -72,97 +76,116 @@ pub const INTERNAL_NODE_RIGHT_SPLIT_COUNT: usize =
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub buf: [u8; PAGE_SIZE],
+    page: Page,
 }
 
-pub struct InternalRef<'a> {
-    pub node: &'a Node,
+#[derive(Debug, Clone)]
+pub struct InternalRef {
+    pub node: Node,
 }
-pub struct LeafRef<'a> {
-    pub node: &'a Node,
-}
-
-pub enum NodeRef<'a> {
-    Internal(InternalRef<'a>),
-    Leaf(LeafRef<'a>),
-}
-pub struct InternalMut<'a> {
-    pub node: &'a mut Node,
-}
-pub struct LeafMut<'a> {
-    pub node: &'a mut Node,
+#[derive(Debug, Clone)]
+pub struct LeafRef {
+    pub node: Node,
 }
 
-pub enum NodeMut<'a> {
-    Internal(InternalMut<'a>),
-    Leaf(LeafMut<'a>),
+#[derive(Debug, Clone)]
+pub enum NodeRef {
+    Internal(InternalRef),
+    Leaf(LeafRef),
+}
+#[derive(Debug, Clone)]
+pub struct InternalMut {
+    pub node_ref: InternalRef,
+}
+#[derive(Debug, Clone)]
+pub struct LeafMut {
+    pub node_ref: LeafRef,
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeMut {
+    Internal(InternalMut),
+    Leaf(LeafMut),
 }
 
 impl Node {
-    pub fn new(buf: [u8; PAGE_SIZE]) -> Self {
-        Node { buf }
+    pub fn new(page: Page) -> Self {
+        Self { page }
     }
-
+    pub fn raw_buf(&self) -> RefMut<[u8]> {
+        RefMut::map(self.page.borrow_mut(), |page| &mut page.buf[..])
+    }
     // Leaf Node
-    pub fn init_leaf<'a>(&'a mut self) -> LeafMut<'a> {
+    pub fn init_leaf(&self) -> LeafMut {
         self.set_type(NodeType::Leaf);
         self.set_root(false);
-        let mut leaf = self.leaf_node_mut();
+        let leaf = self.leaf_node_mut();
         leaf.set_num_cells(0);
         leaf.set_next_leaf(0); // 0 represents no sibling
         leaf
     }
-    pub fn leaf_node_mut<'a>(&'a mut self) -> LeafMut<'a> {
+    pub fn leaf_node_mut(&self) -> LeafMut {
         assert!(self.is_leaf());
-        LeafMut { node: self }
+        LeafMut {
+            node_ref: self.leaf_node(),
+        }
     }
-    pub fn leaf_node<'a>(&'a self) -> LeafRef<'a> {
+    pub fn leaf_node(&self) -> LeafRef {
         assert!(self.is_leaf());
-        LeafRef { node: self }
+        LeafRef { node: self.clone() }
     }
 
     // Internal Node
-    pub fn init_internal<'a>(&'a mut self) -> InternalMut<'a> {
+    pub fn init_internal(&self) -> InternalMut {
         self.set_type(NodeType::Internal);
         self.set_root(false);
-        let mut internal = self.internal_node_mut();
+        let internal = self.internal_node_mut();
         internal.set_num_keys(0);
         internal.set_right_child(0);
         internal
     }
-    pub fn internal_node_mut<'a>(&'a mut self) -> InternalMut<'a> {
+    pub fn internal_node_mut(&self) -> InternalMut {
         assert!(self.is_internal());
-        InternalMut { node: self }
+        InternalMut {
+            node_ref: self.internal_node(),
+        }
     }
-    pub fn internal_node<'a>(&'a self) -> InternalRef<'a> {
+    pub fn internal_node(&self) -> InternalRef {
         assert!(self.is_internal());
-        InternalRef { node: self }
+        InternalRef { node: self.clone() }
     }
 
     // Common Node
-    pub fn set_root(&mut self, is_root: bool) {
-        self.buf[IS_ROOT_OFFSET] = is_root as u8;
+    pub fn set_root(&self, is_root: bool) {
+        self.page.borrow_mut().buf[IS_ROOT_OFFSET] = is_root as u8;
     }
     pub fn is_root(&self) -> bool {
-        self.buf[IS_ROOT_OFFSET] == 1
+        self.page.borrow().buf[IS_ROOT_OFFSET] == 1
     }
-    pub fn set_type(&mut self, node_type: NodeType) {
-        self.buf[NODE_TYPE_OFFSET] = node_type as u8;
+    pub fn set_type(&self, node_type: NodeType) {
+        self.page.borrow_mut().buf[NODE_TYPE_OFFSET] = node_type as u8;
+    }
+    pub fn get_type(&self) -> NodeType {
+        match self.page.borrow().buf[NODE_TYPE_OFFSET] {
+            0 => NodeType::Internal,
+            1 => NodeType::Leaf,
+            _ => panic!("Unknown node type"),
+        }
     }
     pub fn is_leaf(&self) -> bool {
-        self.buf[NODE_TYPE_OFFSET] == NodeType::Leaf as u8
+        self.page.borrow().buf[NODE_TYPE_OFFSET] == NodeType::Leaf as u8
     }
     pub fn is_internal(&self) -> bool {
-        self.buf[NODE_TYPE_OFFSET] == NodeType::Internal as u8
+        self.page.borrow().buf[NODE_TYPE_OFFSET] == NodeType::Internal as u8
     }
-    pub fn as_typed<'a>(&'a self) -> NodeRef<'a> {
+    pub fn as_typed(&self) -> NodeRef {
         if self.is_leaf() {
             NodeRef::Leaf(self.leaf_node())
         } else {
             NodeRef::Internal(self.internal_node())
         }
     }
-    pub fn as_typed_mut<'a>(&'a mut self) -> NodeMut<'a> {
+    pub fn as_typed_mut(&mut self) -> NodeMut {
         if self.is_leaf() {
             NodeMut::Leaf(self.leaf_node_mut())
         } else {
@@ -171,13 +194,15 @@ impl Node {
     }
 
     // Parent Node
-    pub fn set_parent(&mut self, parent: usize) {
-        self.buf[PARENT_POINTER_OFFSET..PARENT_POINTER_OFFSET + PARENT_POINTER_SIZE]
+    pub fn set_parent(&self, parent: usize) {
+        self.page.borrow_mut().buf
+            [PARENT_POINTER_OFFSET..PARENT_POINTER_OFFSET + PARENT_POINTER_SIZE]
             .copy_from_slice(&parent.to_le_bytes())
     }
     pub fn get_parent(&self) -> usize {
         usize::from_le_bytes(
-            self.buf[PARENT_POINTER_OFFSET..PARENT_POINTER_OFFSET + PARENT_POINTER_SIZE]
+            self.page.borrow().buf
+                [PARENT_POINTER_OFFSET..PARENT_POINTER_OFFSET + PARENT_POINTER_SIZE]
                 .try_into()
                 .unwrap(),
         )
@@ -190,17 +215,34 @@ impl Node {
             NodeRef::Leaf(leaf) => leaf.get_key(leaf.get_num_cells() - 1),
         }
     }
+
+    // Borrow Map
+    pub fn borrow_map<T, F>(&self, f: F) -> Ref<T>
+    where
+        F: FnOnce(&Box<PageBuffer>) -> &T,
+        T: ?Sized,
+    {
+        Ref::map(self.page.borrow(), f)
+    }
+    pub fn borrow_mut_map<T, F>(&self, f: F) -> RefMut<T>
+    where
+        F: FnOnce(&mut Box<PageBuffer>) -> &mut T,
+        T: ?Sized,
+    {
+        RefMut::map(self.page.borrow_mut(), f)
+    }
 }
 
-impl<'a> LeafRef<'a> {
-    pub fn get_cell(&self, cell: usize) -> &[u8] {
+impl LeafRef {
+    pub fn get_cell(&self, cell: usize) -> Ref<[u8]> {
         let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
-        &self.node.buf[start..start + LEAF_NODE_CELL_SIZE]
+        self.node
+            .borrow_map(|page| &page.buf[start..start + LEAF_NODE_CELL_SIZE])
     }
     pub fn get_num_cells(&self) -> usize {
         let start = LEAF_NODE_NUM_CELLS_OFFSET;
         usize::from_le_bytes(
-            self.node.buf[start..start + LEAF_NODE_NUM_CELLS_SIZE]
+            self.node.page.borrow().buf[start..start + LEAF_NODE_NUM_CELLS_SIZE]
                 .try_into()
                 .unwrap(),
         )
@@ -208,18 +250,19 @@ impl<'a> LeafRef<'a> {
     pub fn get_key(&self, cell: usize) -> u64 {
         let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
         u64::from_le_bytes(
-            self.node.buf[start..start + LEAF_NODE_KEY_SIZE]
+            self.node.page.borrow().buf[start..start + LEAF_NODE_KEY_SIZE]
                 .try_into()
                 .unwrap(),
         )
     }
-    pub fn get_value(&self, cell: usize) -> &[u8] {
+    pub fn get_value(&self, cell: usize) -> Ref<[u8]> {
         let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE + LEAF_NODE_KEY_SIZE;
-        &self.node.buf[start..start + LEAF_NODE_VALUE_SIZE]
+        self.node
+            .borrow_map(|page| &page.buf[start..start + LEAF_NODE_VALUE_SIZE])
     }
     pub fn get_next_leaf(&self) -> usize {
         usize::from_le_bytes(
-            self.node.buf
+            self.node.page.borrow().buf
                 [LEAF_NODE_NEXT_LEAF_OFFSET..LEAF_NODE_NEXT_LEAF_OFFSET + LEAF_NODE_NEXT_LEAF_SIZE]
                 .try_into()
                 .unwrap(),
@@ -227,45 +270,54 @@ impl<'a> LeafRef<'a> {
     }
 }
 
-impl<'a> LeafMut<'a> {
-    pub fn set_num_cells(&mut self, num_cells: usize) {
-        let start = LEAF_NODE_NUM_CELLS_OFFSET;
-        self.node.buf[start..start + LEAF_NODE_NUM_CELLS_SIZE]
-            .copy_from_slice(&num_cells.to_le_bytes())
-    }
-    pub fn set_next_leaf(&mut self, next_leaf: usize) {
-        self.node.buf
-            [LEAF_NODE_NEXT_LEAF_OFFSET..LEAF_NODE_NEXT_LEAF_OFFSET + LEAF_NODE_NEXT_LEAF_SIZE]
-            .copy_from_slice(&next_leaf.to_le_bytes())
-    }
-    pub fn set_key(&mut self, cell: usize, key: u64) {
-        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
-        self.node.buf[start..start + LEAF_NODE_KEY_SIZE].copy_from_slice(&key.to_le_bytes())
-    }
-    pub fn cell(&mut self, cell: usize) -> &mut [u8] {
-        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
-        &mut self.node.buf[start..start + LEAF_NODE_CELL_SIZE]
-    }
-    pub fn value(&mut self, cell: usize) -> &mut [u8] {
-        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE + LEAF_NODE_KEY_SIZE;
-        &mut self.node.buf[start..start + LEAF_NODE_VALUE_SIZE]
-    }
-    pub fn view(&mut self) -> LeafRef {
-        LeafRef { node: &self.node }
+impl Deref for LeafMut {
+    type Target = LeafRef;
+    fn deref(&self) -> &Self::Target {
+        &self.node_ref
     }
 }
 
-impl<'a> InternalRef<'a> {
+impl LeafMut {
+    pub fn set_num_cells(&self, num_cells: usize) {
+        let start = LEAF_NODE_NUM_CELLS_OFFSET;
+        self.node.page.borrow_mut().buf[start..start + LEAF_NODE_NUM_CELLS_SIZE]
+            .copy_from_slice(&num_cells.to_le_bytes())
+    }
+    pub fn set_next_leaf(&self, next_leaf: usize) {
+        self.node.page.borrow_mut().buf
+            [LEAF_NODE_NEXT_LEAF_OFFSET..LEAF_NODE_NEXT_LEAF_OFFSET + LEAF_NODE_NEXT_LEAF_SIZE]
+            .copy_from_slice(&next_leaf.to_le_bytes())
+    }
+    pub fn set_key(&self, cell: usize, key: u64) {
+        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
+        self.node.page.borrow_mut().buf[start..start + LEAF_NODE_KEY_SIZE]
+            .copy_from_slice(&key.to_le_bytes())
+    }
+    pub fn cell(&self, cell: usize) -> RefMut<[u8]> {
+        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE;
+        self.node
+            .borrow_mut_map(|page| &mut page.buf[start..start + LEAF_NODE_CELL_SIZE])
+    }
+    pub fn value(&self, cell: usize) -> RefMut<[u8]> {
+        let start = LEAF_NODE_HEADER_SIZE + cell * LEAF_NODE_CELL_SIZE + LEAF_NODE_KEY_SIZE;
+        self.node
+            .borrow_mut_map(|page| &mut page.buf[start..start + LEAF_NODE_VALUE_SIZE])
+    }
+}
+
+impl InternalRef {
     pub fn get_num_keys(&self) -> usize {
         usize::from_le_bytes(
-            self.node.buf[INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
+            self.node.page.borrow().buf
+                [INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
                 .try_into()
                 .unwrap(),
         )
     }
     pub fn get_right_child(&self) -> usize {
         usize::from_le_bytes(
-            self.node.buf[INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
+            self.node.page.borrow().buf
+                [INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
                 .try_into()
                 .unwrap(),
         )
@@ -274,7 +326,7 @@ impl<'a> InternalRef<'a> {
         let start =
             INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE + INTERNAL_NODE_CHILD_SIZE;
         u64::from_le_bytes(
-            self.node.buf[start..start + INTERNAL_NODE_KEY_SIZE]
+            self.node.page.borrow().buf[start..start + INTERNAL_NODE_KEY_SIZE]
                 .try_into()
                 .unwrap(),
         )
@@ -285,7 +337,7 @@ impl<'a> InternalRef<'a> {
         }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
         usize::from_le_bytes(
-            self.node.buf[start..start + INTERNAL_NODE_CHILD_SIZE]
+            self.node.page.borrow().buf[start..start + INTERNAL_NODE_CHILD_SIZE]
                 .try_into()
                 .unwrap(),
         )
@@ -297,7 +349,7 @@ impl<'a> InternalRef<'a> {
         while min_index < max_index {
             let index = (min_index + max_index) / 2;
             let key_at_index = self.get_key_at(index);
-            if key < key_at_index {
+            if key <= key_at_index {
                 max_index = index;
             } else {
                 min_index = index + 1;
@@ -305,53 +357,64 @@ impl<'a> InternalRef<'a> {
         }
         min_index
     }
+    // Find index
+    pub fn find_node_index(&self, node_num: usize, key: u64) -> usize {
+        let num = self.find_key(key);
+        let child = self.get_child_at(num);
+        if child != node_num {
+            panic!(
+                "missing node_num {} by key {} (found {})",
+                node_num, key, child
+            )
+        }
+        child
+    }
 }
-impl<'a> InternalMut<'a> {
-    pub fn set_num_keys(&mut self, num_keys: usize) {
-        self.node.buf[INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
+
+impl InternalMut {
+    pub fn set_num_keys(&self, num_keys: usize) {
+        self.node.page.borrow_mut().buf
+            [INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
             .copy_from_slice(&num_keys.to_le_bytes())
     }
-    pub fn set_right_child(&mut self, right_child: usize) {
-        self.node.buf[INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
+    pub fn set_right_child(&self, right_child: usize) {
+        self.node.page.borrow_mut().buf
+            [INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
             .copy_from_slice(&right_child.to_le_bytes())
     }
-    pub fn set_key_at(&mut self, cell: usize, key: u64) {
+    pub fn set_key_at(&self, cell: usize, key: u64) {
         let start =
             INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE + INTERNAL_NODE_CHILD_SIZE;
-        self.node.buf[start..start + INTERNAL_NODE_KEY_SIZE].copy_from_slice(&key.to_le_bytes())
+        self.node.page.borrow_mut().buf[start..start + INTERNAL_NODE_KEY_SIZE]
+            .copy_from_slice(&key.to_le_bytes())
     }
 
-    pub fn set_child_at(&mut self, cell: usize, child: usize) {
-        if cell == self.view().get_num_keys() {
+    pub fn set_child_at(&self, cell: usize, child: usize) {
+        if cell == self.get_num_keys() {
             self.set_right_child(child);
             return;
         }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
-        self.node.buf[start..start + INTERNAL_NODE_CHILD_SIZE].copy_from_slice(&child.to_le_bytes())
+        self.node.page.borrow_mut().buf[start..start + INTERNAL_NODE_CHILD_SIZE]
+            .copy_from_slice(&child.to_le_bytes())
     }
+}
 
-    pub fn view(&mut self) -> InternalRef {
-        InternalRef { node: &self.node }
+impl Deref for InternalMut {
+    type Target = InternalRef;
+    fn deref(&self) -> &Self::Target {
+        &self.node_ref
     }
 }
 
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let node_type = match self.buf[NODE_TYPE_OFFSET] {
-            0 => "Internal",
-            1 => "Leaf",
-            _ => "Unknown",
+        let node_type = match self.get_type() {
+            NodeType::Internal => "Internal",
+            NodeType::Leaf => "Leaf",
         };
-        let is_root = match self.buf[IS_ROOT_OFFSET] {
-            0 => "No",
-            1 => "Yes",
-            _ => "Unknown",
-        };
-        let parent_page = usize::from_le_bytes(
-            self.buf[PARENT_POINTER_OFFSET..PARENT_POINTER_OFFSET + PARENT_POINTER_SIZE]
-                .try_into()
-                .unwrap(),
-        );
+        let is_root = if self.is_root() { "Yes" } else { "No" };
+        let parent_page = self.get_parent();
         write!(
             f,
             "NodeType: {}, IsRoot: {}, Parent: {}",
@@ -369,7 +432,7 @@ impl Display for Node {
                 for i in 0..num_cells as usize {
                     let key = leaf.get_key(i);
                     let value = leaf.get_value(i);
-                    let row = Row::deserialize(value);
+                    let row = Row::deserialize(&value);
                     writeln!(f, "[{}] {}", key, row)?;
                 }
             }
@@ -391,44 +454,77 @@ impl Display for Node {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_eq;
+
+    use crate::pager::new_page;
+
     use super::*;
 
     #[test]
     fn test_leaf() {
-        let buf = [0u8; PAGE_SIZE];
-        let mut node = Node::new(buf);
-        let mut leaf = node.init_leaf();
+        let node = Node::new(new_page());
+        let leaf = node.init_leaf();
         assert_eq!(leaf.node.is_leaf(), true);
         assert_eq!(leaf.node.is_internal(), false);
-        assert_eq!(leaf.view().get_num_cells(), 0);
+        assert_eq!(leaf.get_num_cells(), 0);
         leaf.set_num_cells(1);
-        assert_eq!(leaf.view().get_num_cells(), 1);
+        assert_eq!(leaf.get_num_cells(), 1);
         leaf.set_key(0, 1);
-        assert_eq!(leaf.view().get_key(0), 1);
+        assert_eq!(leaf.get_key(0), 1);
         let row = [2u8; ROW_SIZE];
         leaf.value(0).copy_from_slice(&row);
-        assert_eq!(leaf.view().get_value(0), row);
+        assert_eq!(*leaf.get_value(0), row);
         leaf.set_next_leaf(1);
-        assert_eq!(leaf.view().get_next_leaf(), 1);
+        assert_eq!(leaf.get_next_leaf(), 1);
     }
     #[test]
     fn test_internal() {
-        let buf = [0u8; PAGE_SIZE];
-        let mut node = Node::new(buf);
-        let mut internal = node.init_internal();
+        let node = Node::new(new_page());
+        let internal = node.init_internal();
         internal.node.set_root(true);
         assert_eq!(internal.node.is_root(), true);
         assert_eq!(internal.node.is_leaf(), false);
         assert_eq!(internal.node.is_internal(), true);
-        assert_eq!(internal.view().get_num_keys(), 0);
+        assert_eq!(internal.get_num_keys(), 0);
         internal.set_num_keys(1);
-        assert_eq!(internal.view().get_num_keys(), 1);
+        assert_eq!(internal.get_num_keys(), 1);
         internal.set_key_at(0, 1);
-        assert_eq!(internal.view().get_key_at(0), 1);
+        assert_eq!(internal.get_key_at(0), 1);
         internal.set_child_at(0, 2);
-        assert_eq!(internal.view().get_child_at(0), 2);
+        assert_eq!(internal.get_child_at(0), 2);
         internal.set_right_child(3);
-        assert_eq!(internal.view().get_right_child(), 3);
-        assert_eq!(internal.view().get_child_at(1), 3);
+        assert_eq!(internal.get_right_child(), 3);
+        assert_eq!(internal.get_child_at(1), 3);
+    }
+    #[test]
+    fn find_key() {
+        let node = Node::new(new_page());
+        let internal = node.init_internal();
+        internal.set_num_keys(3);
+        internal.set_key_at(0, 1);
+        internal.set_key_at(1, 3);
+        internal.set_key_at(2, 5);
+        assert_eq!(internal.find_key(0), 0);
+        assert_eq!(internal.find_key(1), 0);
+        assert_eq!(internal.find_key(2), 1);
+        assert_eq!(internal.find_key(5), 2);
+        assert_eq!(internal.find_key(6), 3);
+    }
+    #[test]
+    fn find_index() {
+        let node = Node::new(new_page());
+        let internal = node.init_internal();
+        internal.set_num_keys(3);
+        internal.set_key_at(0, 2);
+        internal.set_child_at(0, 1);
+        internal.set_key_at(1, 8);
+        internal.set_child_at(1, 3);
+        internal.set_key_at(2, 10);
+        internal.set_child_at(2, 5);
+        internal.set_right_child(7);
+        assert_eq!(internal.find_node_index(1, 2), 1);
+        assert_eq!(internal.find_node_index(3, 8), 3);
+        assert_eq!(internal.find_node_index(5, 10), 5);
+        assert_eq!(internal.find_node_index(7, 15), 7);
     }
 }

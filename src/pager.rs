@@ -6,13 +6,39 @@ use std::{
     rc::Rc,
 };
 
-use crate::{node::Node, sql_error::SqlError};
+use crate::{
+    node::Node,
+    sql_error::{SqlError, SqlResult},
+};
 
 pub const PAGE_SIZE: usize = 4096;
 pub const MAX_PAGES: usize = 100;
 
-pub type PageBuffer = Rc<RefCell<Box<Node>>>;
-type PageContainer = RefCell<Box<[Option<PageBuffer>; MAX_PAGES]>>;
+#[derive(Debug, Clone)]
+pub struct PageBuffer {
+    pub buf: [u8; PAGE_SIZE],
+}
+impl PageBuffer {
+    fn new() -> Self {
+        Self {
+            buf: [0; PAGE_SIZE],
+        }
+    }
+    fn from_buf(buf: [u8; PAGE_SIZE]) -> Self {
+        Self { buf }
+    }
+    fn to_page(&self) -> Page {
+        Rc::new(RefCell::new(Box::new(self.clone())))
+    }
+}
+pub type Page = Rc<RefCell<Box<PageBuffer>>>;
+
+#[allow(dead_code)]
+pub fn new_page() -> Page {
+    PageBuffer::new().to_page()
+}
+
+type PageContainer = RefCell<Box<[Option<Page>; MAX_PAGES]>>;
 pub struct Pager {
     pub file: RefCell<File>,
     pub file_length: usize,
@@ -21,7 +47,7 @@ pub struct Pager {
 }
 
 impl Pager {
-    pub fn open(filename: &str) -> Result<Self, SqlError> {
+    pub fn open(filename: &str) -> SqlResult<Self> {
         let file = File::options()
             .read(true)
             .write(true)
@@ -43,13 +69,12 @@ impl Pager {
         };
         if pager.num_pages.get() == 0 {
             let page = pager.node(0)?;
-            let mut page = page.borrow_mut();
             page.init_leaf();
             page.set_root(true);
         }
         Ok(pager)
     }
-    pub fn node(&self, page_num: usize) -> Result<PageBuffer, SqlError> {
+    pub fn node(&self, page_num: usize) -> SqlResult<Node> {
         if page_num >= MAX_PAGES {
             return Err(SqlError::TableFull);
         }
@@ -68,14 +93,14 @@ impl Pager {
                     .read(&mut buf)
                     .map_err(|e| SqlError::IOError(e, "Failed to read".to_string()))?;
             }
-            pages[page_num] = Some(Rc::new(RefCell::new(Box::new(Node::new(buf)))));
+            pages[page_num] = Some(PageBuffer::from_buf(buf).to_page());
             if page_num >= self.num_pages.get() {
                 self.num_pages.set(page_num + 1);
             }
         }
-        Ok(pages[page_num].as_ref().unwrap().to_owned())
+        Ok(Node::new(pages[page_num].as_ref().unwrap().to_owned()))
     }
-    pub fn flush(&self, page_num: usize) -> Result<(), SqlError> {
+    pub fn flush(&self, page_num: usize) -> SqlResult<()> {
         if self.pages.borrow()[page_num].is_none() {
             return Ok(());
         }
