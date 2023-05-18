@@ -167,6 +167,22 @@ mod test {
             assert_eq!(row.id, *i);
         }
     }
+    #[test]
+    fn remove_single() {
+        let db = "random_insert";
+        let mut table = init_test_db(db);
+        let order = vec![9, 17, 3, 2, 6];
+        for i in &order {
+            let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
+            statement.execute(&mut table).unwrap();
+            println!("##### {} #####\n{}", i, table);
+        }
+
+        for i in &order {
+            let statement = prepare_statement(&format!("delete {}", i)).unwrap();
+            statement.execute(&mut table).unwrap();
+        }
+    }
 
     fn db_name(prefix: &str) -> String {
         format!("./forTest/{}.db", prefix)

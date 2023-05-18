@@ -6,6 +6,7 @@ use crate::table::{Row, Table};
 pub enum Statement {
     Insert(u64, [u8; 32], [u8; 255]),
     Select(u64),
+    Delete(u64),
     SelectAll(),
 }
 
@@ -43,6 +44,16 @@ pub fn prepare_statement(buf: &str) -> SqlResult<Statement> {
             .map_err(|_| SqlError::NotNumber(cmds[1].to_string()))?;
         return Ok(Statement::Select(i as u64));
     }
+    if buf.contains("delete") {
+        let cmds = buf.split(" ").collect::<Vec<&str>>();
+        if cmds.len() != 2 {
+            return Err(SqlError::InvalidArgs);
+        }
+        let i = cmds[1]
+            .parse::<u64>()
+            .map_err(|_| SqlError::NotNumber(cmds[1].to_string()))?;
+        return Ok(Statement::Delete(i as u64));
+    }
     Err(SqlError::UnknownCommand(buf.to_string()))
 }
 
@@ -79,6 +90,14 @@ impl Statement {
                     cursor.advance()?;
                 }
                 Ok(rows)
+            }
+            Statement::Delete(i) => {
+                let mut cursor = table.find(*i)?;
+                if !cursor.has_cell()? || cursor.get()?.get_key() != *i as u64 {
+                    return Err(SqlError::NoData);
+                }
+                cursor.remove()?;
+                Ok(vec![])
             }
         }
     }

@@ -270,13 +270,6 @@ impl LeafRef {
     }
 }
 
-impl Deref for LeafMut {
-    type Target = LeafRef;
-    fn deref(&self) -> &Self::Target {
-        &self.node_ref
-    }
-}
-
 impl LeafMut {
     pub fn set_num_cells(&self, num_cells: usize) {
         let start = LEAF_NODE_NUM_CELLS_OFFSET;
@@ -367,7 +360,7 @@ impl InternalRef {
                 node_num, key, child
             )
         }
-        child
+        num
     }
 }
 
@@ -404,6 +397,24 @@ impl Deref for InternalMut {
     type Target = InternalRef;
     fn deref(&self) -> &Self::Target {
         &self.node_ref
+    }
+}
+impl Deref for LeafMut {
+    type Target = LeafRef;
+    fn deref(&self) -> &Self::Target {
+        &self.node_ref
+    }
+}
+impl Deref for LeafRef {
+    type Target = Node;
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+impl Deref for InternalRef {
+    type Target = Node;
+    fn deref(&self) -> &Self::Target {
+        &self.node
     }
 }
 
@@ -522,9 +533,9 @@ mod tests {
         internal.set_key_at(2, 10);
         internal.set_child_at(2, 5);
         internal.set_right_child(7);
-        assert_eq!(internal.find_node_index(1, 2), 1);
-        assert_eq!(internal.find_node_index(3, 8), 3);
-        assert_eq!(internal.find_node_index(5, 10), 5);
-        assert_eq!(internal.find_node_index(7, 15), 7);
+        assert_eq!(internal.find_node_index(1, 2), 0);
+        assert_eq!(internal.find_node_index(3, 8), 1);
+        assert_eq!(internal.find_node_index(5, 10), 2);
+        assert_eq!(internal.find_node_index(7, 15), 3);
     }
 }

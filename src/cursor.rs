@@ -4,9 +4,10 @@ use crate::{
         INTERNAL_NODE_RIGHT_SPLIT_COUNT, LEAF_NODE_LEFT_SPLIT_COUNT, LEAF_NODE_MAX_CELLS,
         LEAF_NODE_RIGHT_SPLIT_COUNT,
     },
-    sql_error::SqlResult,
+    sql_error::{SqlError, SqlResult},
     table::{Table, ROW_SIZE},
 };
+use core::num;
 use std::cell::Ref;
 
 pub struct Cursor<'a> {
@@ -30,6 +31,7 @@ impl CursorValue {
 }
 
 impl<'a> Cursor<'a> {
+    /// Get values from the cursorS
     pub fn get(&self) -> SqlResult<CursorValue> {
         let node = self.table.leaf_ref(self.page_num)?;
         Ok(CursorValue {
@@ -37,6 +39,8 @@ impl<'a> Cursor<'a> {
             cell_num: self.cell_num,
         })
     }
+
+    /// Go to the next cell
     pub fn advance(&mut self) -> SqlResult<()> {
         self.cell_num += 1;
         let leaf = self.table.leaf_ref(self.page_num)?;
@@ -52,13 +56,18 @@ impl<'a> Cursor<'a> {
         }
         Ok(())
     }
+
+    /// Check if the cursor has a cell
     pub fn has_cell(&self) -> SqlResult<bool> {
         let node = self.table.leaf_ref(self.page_num)?;
         Ok(self.cell_num < node.get_num_cells())
     }
+
+    /// Insert at the position of the cursor
     pub fn insert(&mut self, key: u64, value: [u8; ROW_SIZE]) -> SqlResult<()> {
         let num_cells = self.table.leaf_ref(self.page_num)?.get_num_cells();
         if num_cells >= LEAF_NODE_MAX_CELLS {
+            // When the node is full, split it
             return self.split_and_insert(key, value);
         }
         for i in (self.cell_num..num_cells).rev() {
@@ -74,19 +83,18 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    pub fn split_and_insert(&mut self, key: u64, value: [u8; ROW_SIZE]) -> SqlResult<()> {
-        // cursor_page -> old_node
-        //             -> new_node
-        //             -> root_node
-
-        // Create New Leaf Node
+    fn split_and_insert(&mut self, key: u64, value: [u8; ROW_SIZE]) -> SqlResult<()> {
+        // max cursor_page -> old_node
+        //                 -> new_node
 
         let old_node = self.table.leaf_mut(self.page_num)?;
 
+        // Create New Leaf Node
         let new_page_num = self.table.pager.new_page_num();
         let new_node = self.table.pager.node(new_page_num)?.init_leaf();
 
         println!("Split Leaf old:{} new:{}", self.page_num, new_page_num);
+
         // Move the rows to the old node to the new node
         for i in (0..=LEAF_NODE_MAX_CELLS).rev() {
             let n = if i >= LEAF_NODE_LEFT_SPLIT_COUNT {
@@ -115,6 +123,8 @@ impl<'a> Cursor<'a> {
                 };
             }
         }
+
+        // Node properties
         let old_node_next = old_node.get_next_leaf();
         old_node.set_next_leaf(new_page_num);
         old_node.set_num_cells(LEAF_NODE_LEFT_SPLIT_COUNT);
@@ -123,14 +133,15 @@ impl<'a> Cursor<'a> {
         new_node.set_num_cells(LEAF_NODE_RIGHT_SPLIT_COUNT);
         new_node.node.set_parent(old_node.node.get_parent());
 
+        // Update parent key
         let old_max = old_node.node.get_max_key();
         let new_max = new_node.node.get_max_key();
         let parent_num = old_node.node.get_parent();
         let old_is_root = old_node.node.is_root();
-
         self.update_parent(old_is_root, parent_num, old_max, new_max, new_page_num)
     }
 
+    /// update parent node after splitting
     fn update_parent(
         &mut self,
         old_is_root: bool,
@@ -147,6 +158,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// When root_node is splitted, create new root
     fn create_new_root(&mut self, right_child_num: usize) -> SqlResult<()> {
         println!("Create New Root root:{}", self.table.root_page_num);
 
@@ -155,12 +167,11 @@ impl<'a> Cursor<'a> {
         let left_child = self.table.pager.node(left_child_num)?;
 
         // current root is moved to left
-        // new root has left and right
-
         let root = self.table.pager.node(self.table.root_page_num)?;
         left_child.raw_buf().copy_from_slice(&root.raw_buf());
         left_child.set_root(false);
 
+        // new root has left and right
         let root = root.init_internal();
         root.node.set_root(true);
         root.set_num_keys(1);
@@ -176,6 +187,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
+    /// Search right most max key
     fn get_key_right_most(&self, node_num: usize) -> SqlResult<u64> {
         let node = self.table.pager.node(node_num)?;
         Ok(match node.as_typed() {
@@ -184,6 +196,7 @@ impl<'a> Cursor<'a> {
         })
     }
 
+    /// After node is splitted, update new key to parent
     fn update_internal_node_key(
         &mut self,
         parent_num: usize,
@@ -196,6 +209,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
+    /// After node is splitted, insert new node to parent
     fn insert_internal_node(&mut self, parent_num: usize, child_num: usize) -> SqlResult<()> {
         let parent = self.table.internal_mut(parent_num)?;
         let child = self.table.pager.node(child_num)?;
@@ -216,12 +230,12 @@ impl<'a> Cursor<'a> {
         parent.set_num_keys(original_num_keys + 1);
 
         if child_max > right_max {
-            /* Replace right child */
+            // Replace right child
             parent.set_key_at(original_num_keys, right_max);
             parent.set_child_at(original_num_keys, right_child_num);
             parent.set_right_child(child_num);
         } else {
-            /* Move cells to make room */
+            // Move cells to make room
             for i in (index..original_num_keys).rev() {
                 let key = parent.get_key_at(i);
                 let child_num = parent.get_child_at(i);
@@ -234,6 +248,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
+    /// When internal node is overflowed, split to new internal node
     fn split_and_insert_internal_node(
         &mut self,
         node_num: usize,
@@ -307,6 +322,235 @@ impl<'a> Cursor<'a> {
 
         self.update_parent(old_is_root, parent_num, old_max, new_max, new_node_num)
     }
+
+    /// Remove cell from leaf node
+    pub fn remove(&mut self) -> SqlResult<()> {
+        if !self.has_cell()? {
+            return Err(SqlError::NoData);
+        }
+
+        let leaf_num = self.page_num;
+        let leaf = self.table.leaf_mut(leaf_num)?;
+
+        let leaf_max = leaf.node.get_max_key();
+
+        // Remove Element
+        let num_cells = leaf.get_num_cells();
+        for i in self.cell_num..(num_cells - 1) {
+            let cell = leaf.cell(i + 1).to_owned();
+            leaf.cell(i).copy_from_slice(&cell);
+        }
+        leaf.set_num_cells(num_cells - 1);
+        let num_cells = leaf.get_num_cells();
+
+        if leaf.node.is_root() {
+            // Not need to merge
+            return Ok(());
+        }
+
+        if num_cells >= LEAF_NODE_RIGHT_SPLIT_COUNT {
+            // No need to balance
+            return Ok(());
+        }
+
+        println!("Balance leaf node: {}", leaf_num);
+        let next_leaf = leaf.get_next_leaf();
+        if next_leaf == 0 {
+            // Merge to right node
+            let left_num = self.previous_leaf(leaf_num)?;
+            let left = self.table.leaf_mut(left_num)?;
+
+            if left.get_num_cells() + leaf.get_num_cells() <= LEAF_NODE_MAX_CELLS {
+                // Merge leaves
+                self.merge_and_remove(left_num, leaf_num)?;
+            } else {
+                // Shift from left
+                let num_leaf = leaf.get_num_cells();
+                let num_left = left.get_num_cells();
+                for i in (0..num_leaf).rev() {
+                    let cell = leaf.cell(i).to_owned();
+                    leaf.cell(i + 1).copy_from_slice(&cell);
+                }
+                {
+                    let left_last = left.cell(num_left - 1);
+                    leaf.cell(0).copy_from_slice(&left_last);
+                }
+                leaf.set_num_cells(num_leaf + 1);
+                left.set_num_cells(num_left - 1);
+                // Update parent key
+                let parent_num = left.node.get_parent();
+                let parent = self.table.internal_ref(parent_num)?;
+                let num_left = left.get_num_cells();
+                let left_last_key = left.get_key(num_left - 1);
+                let index = parent.find_node_index(left_num, left_last_key);
+                self.update_key(parent_num, index, left_last_key)?;
+            }
+
+            return Ok(());
+        }
+
+        // Pick from right
+        let right_index = next_leaf;
+        let right = self.table.leaf_mut(right_index)?;
+
+        if right.get_num_cells() + leaf.get_num_cells() <= LEAF_NODE_MAX_CELLS {
+            // Merge leaves
+            self.merge_and_remove(leaf_num, right_index);
+        } else {
+            let leaf_nums = leaf.get_num_cells();
+            // Shift from right
+            let right_0_key = right.get_key(0);
+            {
+                let right_0 = right.cell(0);
+                leaf.cell(leaf_nums).copy_from_slice(&right_0);
+            }
+            leaf.set_num_cells(leaf_nums + 1);
+            for i in 0..right.get_num_cells() - 1 {
+                let cell = right.cell(i + 1).to_owned(); // TODO slow owned
+                right.cell(i).copy_from_slice(&cell);
+            }
+            let right_nums = right.get_num_cells();
+            right.set_num_cells(right_nums - 1);
+
+            // Update parent key
+            let parent_num = leaf.node.get_parent();
+            let parent = self.table.internal_mut(parent_num)?;
+            let index = parent.find_node_index(leaf_num, leaf_max);
+            self.update_key(parent_num, index, right_0_key)?;
+        }
+        Ok(())
+    }
+
+    fn previous_leaf(&self, leaf_num: usize) -> SqlResult<usize> {
+        // Back traverse
+        let leaf = self.table.leaf_ref(leaf_num)?;
+        let leaf_max = leaf.node.get_max_key();
+        assert!(!leaf.is_root());
+        let parent_num = leaf.node.get_parent();
+        let parent = self.table.internal_ref(parent_num)?;
+        let index = parent.find_node_index(leaf_num, leaf_max);
+        if index == 0 {
+            // Recursive upper
+            assert!(!parent.is_root());
+            let previous_parent_num = self.previous_parent(parent_num)?;
+            let previous_parent = self.table.internal_ref(previous_parent_num)?;
+            let node_num = previous_parent.get_right_child();
+            Ok(node_num)
+        } else {
+            let left_num = parent.get_child_at(index - 1);
+            return Ok(left_num);
+        }
+    }
+
+    fn previous_parent(&self, node_num: usize) -> SqlResult<usize> {
+        let node = self.table.internal_ref(node_num)?;
+        assert!(!node.is_root());
+        let parent_num = node.node.get_parent();
+        let parent = self.table.internal_ref(parent_num)?;
+        let node_key = self.get_key_right_most(node_num)?;
+        let index = parent.find_node_index(node_num, node_key);
+        if index == 0 {
+            // Recursive upper
+            assert!(!parent.is_root());
+            let previous_parent_num = self.previous_parent(parent_num)?;
+            return Ok(previous_parent_num);
+        } else {
+            let left_num = parent.get_child_at(index - 1);
+            return Ok(left_num);
+        }
+    }
+
+    fn update_key(&mut self, node_num: usize, index: usize, key: u64) -> SqlResult<()> {
+        println!("Update Node{}[{}] = key {}", node_num, index, key);
+        let node = self.table.internal_mut(node_num)?;
+
+        let num_key = node.get_num_keys();
+        if num_key == index {
+            // right child key is not need to update
+            return Ok(());
+        }
+        node.set_key_at(index, key);
+
+        // recursive update
+        if node.node.is_root() {
+            return Ok(());
+        }
+        let parent_num = node.node.get_parent();
+        let parent = self.table.internal_mut(parent_num)?;
+        let node_key = node.get_max_key();
+        let node_index = parent.find_node_index(node_num, node_key);
+        self.update_key(parent_num, node_index, key)?;
+        Ok(())
+    }
+
+    fn merge_and_remove(&mut self, left_num: usize, right_num: usize) -> SqlResult<()> {
+        println!("Merge Node{} and Node{}", left_num, right_num);
+        let left = self.table.leaf_mut(left_num)?;
+        let right = self.table.leaf_mut(right_num)?;
+
+        let left_key = left.get_max_key();
+        let right_key = right.get_max_key();
+
+        let left_cells = left.get_num_cells();
+        let right_cells = right.get_num_cells();
+
+        assert!(left_cells + right_cells <= LEAF_NODE_MAX_CELLS);
+
+        for i in 0..right_cells {
+            let cell = right.cell(i).to_owned(); // TODO: slow owned
+            left.cell(left_cells + i).copy_from_slice(&cell);
+        }
+        left.set_next_leaf(right.get_next_leaf());
+        left.set_num_cells(left_cells + right_cells);
+        // TODO: right_cells is already not used.
+
+        let parent_num = left.node.get_parent();
+        let parent = self.table.internal_mut(parent_num)?;
+
+        let left_index = parent.find_node_index(left_num, left_key);
+        self.update_key(parent_num, left_index, left_key)?;
+
+        let right_index = parent.find_node_index(right_num, right_key);
+        self.remove_key_from_internal(parent_num, right_num, right_index)
+    }
+
+    fn remove_key_from_internal(
+        &mut self,
+        parent_num: usize,
+        node_num: usize,
+        key_index: usize,
+    ) -> SqlResult<()> {
+        let parent = self.table.internal_mut(parent_num)?;
+        let num_keys = parent.get_num_keys();
+        if key_index == num_keys {
+            let right_child = parent.get_child_at(key_index - 1);
+            parent.set_right_child(right_child);
+        } else {
+            for i in key_index..num_keys {
+                let key = parent.get_key_at(i + 1);
+                parent.set_key_at(i, key);
+            }
+            for i in key_index..(num_keys - 1) {
+                let child = parent.get_child_at(i + 1);
+                parent.set_child_at(i, child);
+            }
+        }
+        parent.set_num_keys(num_keys - 1);
+
+        let num_keys = parent.get_num_keys();
+        if parent.node.is_root() {
+            if num_keys == 0 {
+                let single = parent.get_child_at(0);
+                let node = self.table.pager.node(single)?;
+                parent.raw_buf().copy_from_slice(&node.raw_buf());
+                parent.set_root(true);
+                // TODO: node is not used anymore
+            }
+            return Ok(());
+        }
+        // TODO balancing
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -360,5 +604,45 @@ mod tests {
 
         assert_eq!(node2.get_num_cells(), LEAF_NODE_LEFT_SPLIT_COUNT);
         assert_eq!(node1.get_num_cells(), LEAF_NODE_RIGHT_SPLIT_COUNT);
+    }
+    #[test]
+    fn small_remove() {
+        let db = "small_remove";
+        let mut table = init_test_db(db);
+        let mut cursor = table.start().unwrap();
+        cursor.insert(0, [1; ROW_SIZE]).unwrap();
+        cursor.advance();
+        cursor.insert(1, [1; ROW_SIZE]).unwrap();
+        cursor.advance();
+        cursor.insert(2, [1; ROW_SIZE]).unwrap();
+        let mut cursor = table.start().unwrap();
+        cursor.advance();
+        cursor.remove();
+        assert_eq!(cursor.get().unwrap().get_key(), 2);
+        assert_eq!(cursor.table.leaf_ref(0).unwrap().get_num_cells(), 2);
+        let mut cursor = table.start().unwrap();
+        cursor.remove();
+        cursor.remove();
+        println!("{}", cursor.table);
+    }
+    #[test]
+    fn leaf_balance() {
+        let db = "leaf_balance";
+        let mut table = init_test_db(db);
+        let rows = vec![0, 4, 5, 6, 3, 2, 1];
+        for i in rows {
+            table
+                .find(i as u64)
+                .unwrap()
+                .insert(i as u64, [i as u8; ROW_SIZE])
+                .unwrap();
+        }
+        println!("{}", table);
+
+        let removes = vec![1, 2, 5, 6, 3];
+        for i in removes {
+            table.find(i as u64).unwrap().remove().unwrap();
+            println!("### {} ###\n{}", i, table);
+        }
     }
 }
