@@ -7,8 +7,7 @@ use crate::{
     sql_error::{SqlError, SqlResult},
     table::{Table, ROW_SIZE},
 };
-use core::num;
-use std::cell::Ref;
+use std::{cell::Ref, unimplemented};
 
 pub struct Cursor<'a> {
     pub table: &'a mut Table,
@@ -357,7 +356,7 @@ impl<'a> Cursor<'a> {
         let next_leaf = leaf.get_next_leaf();
         if next_leaf == 0 {
             // Merge to right node
-            let left_num = self.previous_leaf(leaf_num)?;
+            let left_num = self.previous_leaf(leaf_num)?.unwrap();
             let left = self.table.leaf_mut(left_num)?;
 
             if left.get_num_cells() + leaf.get_num_cells() <= LEAF_NODE_MAX_CELLS {
@@ -421,43 +420,90 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn previous_leaf(&self, leaf_num: usize) -> SqlResult<usize> {
+    fn previous_leaf(&self, leaf_num: usize) -> SqlResult<Option<usize>> {
         // Back traverse
         let leaf = self.table.leaf_ref(leaf_num)?;
         let leaf_max = leaf.node.get_max_key();
-        assert!(!leaf.is_root());
+        if leaf.is_root() {
+            return Ok(None);
+        }
         let parent_num = leaf.node.get_parent();
         let parent = self.table.internal_ref(parent_num)?;
         let index = parent.find_node_index(leaf_num, leaf_max);
         if index == 0 {
             // Recursive upper
-            assert!(!parent.is_root());
-            let previous_parent_num = self.previous_parent(parent_num)?;
+            if parent.is_root() {
+                return Ok(None);
+            }
+            let previous_parent_num = self.prev_internal(parent_num)?;
+            let previous_parent_num = match previous_parent_num {
+                None => return Ok(None),
+                Some(n) => n,
+            };
             let previous_parent = self.table.internal_ref(previous_parent_num)?;
             let node_num = previous_parent.get_right_child();
-            Ok(node_num)
+            Ok(Some(node_num))
         } else {
             let left_num = parent.get_child_at(index - 1);
-            return Ok(left_num);
+            return Ok(Some(left_num));
         }
     }
 
-    fn previous_parent(&self, node_num: usize) -> SqlResult<usize> {
+    fn prev_internal(&self, node_num: usize) -> SqlResult<Option<usize>> {
         let node = self.table.internal_ref(node_num)?;
-        assert!(!node.is_root());
+        if node.is_root() {
+            return Ok(None);
+        }
         let parent_num = node.node.get_parent();
         let parent = self.table.internal_ref(parent_num)?;
         let node_key = self.get_key_right_most(node_num)?;
         let index = parent.find_node_index(node_num, node_key);
         if index == 0 {
             // Recursive upper
-            assert!(!parent.is_root());
-            let previous_parent_num = self.previous_parent(parent_num)?;
-            return Ok(previous_parent_num);
-        } else {
-            let left_num = parent.get_child_at(index - 1);
-            return Ok(left_num);
+            if parent.is_root() {
+                return Ok(None);
+            }
+            let previous_parent_num = self.prev_internal(parent_num)?;
+            let previous_parent_num = match previous_parent_num {
+                None => return Ok(None),
+                Some(n) => n,
+            };
+
+            let previous_parent = self.table.internal_ref(previous_parent_num)?;
+            let node_num = previous_parent.get_right_child();
+            return Ok(Some(node_num));
         }
+        let left_num = parent.get_child_at(index - 1);
+        Ok(Some(left_num))
+    }
+
+    fn next_internal(&self, node_num: usize) -> SqlResult<Option<usize>> {
+        let node = self.table.internal_ref(node_num)?;
+        if node.is_root() {
+            return Ok(None);
+        }
+        let parent_num = node.node.get_parent();
+        let parent = self.table.internal_ref(parent_num)?;
+
+        let node_key = self.get_key_right_most(node_num)?;
+        let index = parent.find_node_index(node_num, node_key);
+
+        if index == parent.get_num_keys() {
+            // Recursive upper
+            if parent.is_root() {
+                return Ok(None);
+            }
+            let next_parent_num = self.next_internal(parent_num)?;
+            let next_parent_num = match next_parent_num {
+                None => return Ok(None),
+                Some(n) => n,
+            };
+            let next_parent = self.table.internal_ref(next_parent_num)?;
+            let node_num = next_parent.get_child_at(0);
+            return Ok(Some(node_num));
+        }
+        let right_num = parent.get_child_at(index + 1);
+        Ok(Some(right_num))
     }
 
     fn update_key(&mut self, node_num: usize, index: usize, key: u64) -> SqlResult<()> {
@@ -511,16 +557,12 @@ impl<'a> Cursor<'a> {
         self.update_key(parent_num, left_index, left_key)?;
 
         let right_index = parent.find_node_index(right_num, right_key);
-        self.remove_key_from_internal(parent_num, right_num, right_index)
+        self.remove_key_from_internal(parent_num, right_index)
     }
 
-    fn remove_key_from_internal(
-        &mut self,
-        parent_num: usize,
-        node_num: usize,
-        key_index: usize,
-    ) -> SqlResult<()> {
+    fn remove_key_from_internal(&mut self, parent_num: usize, key_index: usize) -> SqlResult<()> {
         let parent = self.table.internal_mut(parent_num)?;
+
         let num_keys = parent.get_num_keys();
         if key_index == num_keys {
             let right_child = parent.get_child_at(key_index - 1);
@@ -548,7 +590,118 @@ impl<'a> Cursor<'a> {
             }
             return Ok(());
         }
-        // TODO balancing
+
+        self.balance_internal(parent_num)
+    }
+
+    fn balance_internal(&mut self, node_num: usize) -> SqlResult<()> {
+        let node = self.table.internal_mut(node_num).unwrap();
+        let num_keys = node.get_num_keys();
+        if num_keys >= INTERNAL_NODE_RIGHT_SPLIT_COUNT {
+            return Ok(());
+        }
+
+        if node.is_root() {
+            if num_keys == 0 {
+                let single = node.get_child_at(0);
+                let single = self.table.pager.node(single)?;
+                node.raw_buf().copy_from_slice(&single.raw_buf());
+                node.set_root(true);
+            }
+            return Ok(());
+        }
+
+        let right_num = self.next_internal(node_num)?;
+        if right_num.is_none() {
+            let left_num = self.prev_internal(node_num)?;
+            if left_num.is_none() {
+                panic!("node {} is singleton?", node_num);
+            }
+
+            let left_num = left_num.unwrap();
+            let left = self.table.internal_ref(left_num)?;
+            let left_num_keys = left.get_num_keys();
+
+            if num_keys + left_num_keys + 2 <= INTERNAL_NODE_MAX_CELLS + 1 {
+                return self.merge_and_remove_internal(node_num, right_num);
+            }
+            // Shift Left ---> Node
+            for i in (1..left_num_keys).rev() {
+                let key = node.get_key_at(i - 1);
+                let child = node.get_child_at(i - 1);
+                node.set_key_at(i, key);
+                node.set_child_at(i, child);
+            }
+            let left_max = self.get_key_right_most(left_num)?;
+            let left_child = left.get_child_at(left_num_keys - 1);
+            node.set_key_at(0, left_max);
+            node.set_child_at(0, left_child);
+
+            let parent_num = node.get_parent();
+            let parent = self.table.internal_ref(parent_num)?;
+            let node_index = parent.find_node_index(node_num, left_max);
+            let new_right_key = self.get_key_right_most(left_num_keys)?;
+            self.update_key(parent_num, node_index, new_right_key)?;
+        }
+
+        let right_num = right_num.unwrap();
+        let right = self.table.internal_mut(right_num)?;
+        let right_num_keys = right.get_num_keys();
+        if num_keys + right_num_keys + 2 <= INTERNAL_NODE_MAX_CELLS + 1 {
+            return self.merge_and_remove_internal(node_num, right_num);
+        }
+
+        let node_max = self.get_key_right_most(node_num)?;
+        // Shift node <-- right
+        node.set_num_keys(num_keys + 1);
+        node.set_key_at(num_keys, node_max);
+        node.set_child_at(num_keys, node.get_right_child());
+        node.set_right_child(right.get_child_at(0));
+        for i in 1..right_num_keys {
+            let key = right.get_key_at(i);
+            let child = right.get_child_at(i);
+            right.set_key_at(i - 1, key);
+            right.set_child_at(i - 1, child);
+        }
+
+        let parent_num = node.get_parent();
+        let parent = self.table.internal_ref(parent_num)?;
+        let node_index = parent.find_node_index(node_num, node_max);
+        let new_node_max = self.get_key_right_most(node_num)?;
+        self.update_key(parent_num, node_index, new_node_max)
+    }
+
+    fn merge_and_remove_internal(&self, left_num: usize, right_num: usize) -> SqlResult<()> {
+        let left = self.table.internal_mut(left_num)?;
+        let right = self.table.internal_mut(right_num)?;
+        let left_num_keys = left.get_num_keys();
+        let right_num_keys = right.get_num_keys();
+
+        let parent_num = left.get_parent();
+        let parent = self.table.internal_mut(parent_num)?;
+        let left_max = self.get_key_right_most(left_num)?;
+        let left_index = parent.find_node_index(left_num, left_max);
+
+        let right_parent_num = right.get_parent();
+        let right_parent = self.table.internal_mut(right_parent_num)?;
+        let right_max = self.get_key_right_most(right_num)?;
+        let right_index = right_parent.find_node_index(right_num, right_max);
+
+        // move right to left
+        left.set_num_keys(left_num_keys + 1 + right_num_keys);
+        let left_last_num = left.get_right_child();
+        let left_last_key = self.get_key_right_most(left_last_num)?;
+        left.set_child_at(left_num_keys, left_last_num);
+        left.set_key_at(left_num_keys, left_last_key);
+
+        for i in 0..right_num_keys {
+            let key = right.get_key_at(i);
+            let child = right.get_child_at(i);
+            left.set_key_at(left_num_keys + 1 + i, key);
+            left.set_child_at(left_num_keys + 1 + i, child);
+        }
+        left.set_right_child(right.get_right_child());
+        // TODO: right is not freed
         Ok(())
     }
 }
