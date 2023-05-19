@@ -129,7 +129,7 @@ impl Statement {
                 Ok(rows)
             }
             Statement::Delete(i) => {
-                let mut cursor = table.find(*i)?;
+                let cursor = table.find(*i)?;
                 if !cursor.has_cell()? || cursor.get()?.get_key() != *i as u64 {
                     return Err(SqlError::NoData);
                 }

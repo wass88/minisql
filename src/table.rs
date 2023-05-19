@@ -157,7 +157,7 @@ impl Table {
         Ok(meta.get_root_num())
     }
     pub fn set_root_num(&self, root_num: usize) -> SqlResult<()> {
-        let mut meta = self.meta_mut()?;
+        let meta = self.meta_mut()?;
         meta.set_root_num(root_num);
         Ok(())
     }

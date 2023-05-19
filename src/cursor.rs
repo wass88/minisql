@@ -215,7 +215,7 @@ impl<'a> Cursor<'a> {
         root.set_child_at(0, left_num);
         root.set_key_at(1, right_child.get_first_key());
         root.set_child_at(1, right_child_num);
-        self.table.set_root_num(new_root_num);
+        self.table.set_root_num(new_root_num)?;
 
         println!(
             "root{}: {}\nleft{} [{}]: {}\nright{} j[{}]: {}",
