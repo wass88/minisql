@@ -71,6 +71,8 @@ pub const INTERNAL_NODE_LEFT_SPLIT_COUNT: usize = (INTERNAL_NODE_MAX_CELLS + 2) 
 pub const INTERNAL_NODE_RIGHT_SPLIT_COUNT: usize =
     INTERNAL_NODE_MAX_CELLS + 1 - INTERNAL_NODE_LEFT_SPLIT_COUNT;
 
+pub const MISSING_NODE: usize = 0;
+
 #[derive(Debug, Clone)]
 pub struct Node {
     pub page: Page,
@@ -118,7 +120,7 @@ impl Node {
         self.set_root(false);
         let leaf = self.leaf_node_mut();
         leaf.set_num_cells(0);
-        leaf.set_next_leaf(0); // 0 represents no sibling
+        leaf.set_next_leaf(MISSING_NODE);
         leaf
     }
     pub fn leaf_node_mut(&self) -> LeafMut {
@@ -337,7 +339,6 @@ impl InternalRef {
     pub fn find_key(&self, key: u64) -> Option<usize> {
         let mut min_index = 0;
         let mut max_index = self.get_num_keys();
-        println!("min {} max {}; node{}", min_index, max_index, self.node);
         while min_index < max_index {
             let index = (min_index + max_index) / 2;
             let key_at_index = self.get_key_at(index);

@@ -177,13 +177,16 @@ mod test {
         let order = vec![9, 17, 3, 2, 6];
         for i in &order {
             let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
+            println!("##### ins {} #####", i);
             statement.execute(&mut table).unwrap();
-            println!("##### {} #####\n{}", i, table);
+            println!("{}", table);
         }
 
         for i in &order {
             let statement = prepare_statement(&format!("delete {}", i)).unwrap();
+            println!("##### del {} #####", i);
             statement.execute(&mut table).unwrap();
+            println!("{}", table);
         }
     }
 
