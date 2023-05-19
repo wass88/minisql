@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    meta::{DEFAULT_ROOT_NUM, META_NODE_NUM},
     node::Node,
     sql_error::{SqlError, SqlResult},
 };
@@ -68,11 +69,17 @@ impl Pager {
             pages: RefCell::new(Box::new(pages)),
         };
         if pager.num_pages.get() == 0 {
-            let page = pager.node(0)?;
-            page.init_leaf();
-            page.set_root(true);
+            pager.init_db()?
         }
         Ok(pager)
+    }
+    fn init_db(&self) -> SqlResult<()> {
+        let page = self.node(META_NODE_NUM)?;
+        page.init_meta();
+        let page = self.node(DEFAULT_ROOT_NUM)?;
+        page.init_leaf();
+        page.set_root(true);
+        Ok(())
     }
     pub fn node(&self, page_num: usize) -> SqlResult<Node> {
         if page_num >= MAX_PAGES {

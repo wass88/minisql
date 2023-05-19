@@ -1,5 +1,6 @@
 use crate::{
     cursor::Cursor,
+    meta::{MetaMut, MetaRef, META_NODE_NUM},
     node::{InternalMut, InternalRef, LeafMut, LeafRef, NodeRef, NodeType},
     pager::Pager,
     sql_error::SqlResult,
@@ -56,14 +57,12 @@ impl Row {
 
 pub struct Table {
     pub pager: Pager,
-    pub root_page_num: usize,
 }
 
 impl Table {
     pub fn open(filename: &str) -> SqlResult<Self> {
         Ok(Table {
             pager: Pager::open(filename)?,
-            root_page_num: 0,
         })
     }
 
@@ -87,27 +86,19 @@ impl Table {
     }
 
     pub fn find(&mut self, key: u64) -> SqlResult<Cursor> {
-        let root_node = self.pager.node(self.root_page_num)?;
+        let root_node = self.pager.node(self.get_root_num()?)?;
         match root_node.get_type() {
-            NodeType::Leaf => self.find_leaf(self.root_page_num, key),
-            NodeType::Internal => self.find_internal(self.root_page_num, key),
+            NodeType::Leaf => self.find_leaf(self.get_root_num()?, key),
+            NodeType::Internal => self.find_internal(self.get_root_num()?, key),
         }
     }
     pub fn find_internal(&mut self, page_num: usize, key: u64) -> SqlResult<Cursor> {
-        let node = self.internal_mut(page_num)?;
-        let num_keys = node.get_num_keys();
-        let mut min_index = 0usize;
-        let mut max_index = num_keys;
-        while min_index < max_index {
-            let index = (min_index + max_index) / 2;
-            let key_at_index = node.get_key_at(index);
-            if key_at_index >= key {
-                max_index = index;
-            } else {
-                min_index = index + 1;
-            }
-        }
-        let child = node.get_child_at(max_index);
+        let node = self.internal_ref(page_num)?;
+        let index = match node.find_key(key) {
+            Some(index) => index,
+            None => 0,
+        };
+        let child = node.get_child_at(index);
         let child_node = self.pager.node(child)?;
         match child_node.get_type() {
             NodeType::Leaf => self.find_leaf(child, key),
@@ -151,6 +142,25 @@ impl Table {
         let node = self.pager.node(page_num)?;
         Ok(node.internal_node())
     }
+
+    // Meta
+    pub fn meta_mut(&self) -> SqlResult<MetaMut> {
+        let node = self.pager.node(META_NODE_NUM)?;
+        Ok(node.meta_node_mut())
+    }
+    pub fn meta_ref(&self) -> SqlResult<MetaRef> {
+        let node = self.pager.node(META_NODE_NUM)?;
+        Ok(node.meta_node())
+    }
+    pub fn get_root_num(&self) -> SqlResult<usize> {
+        let meta = self.meta_ref()?;
+        Ok(meta.get_root_num())
+    }
+    pub fn set_root_num(&self, root_num: usize) -> SqlResult<()> {
+        let mut meta = self.meta_mut()?;
+        meta.set_root_num(root_num);
+        Ok(())
+    }
 }
 
 impl Display for Table {
@@ -184,15 +194,40 @@ impl Display for Table {
             let buf = indent(&buf, indent_size);
             write!(f, "{}", buf)?;
             if let NodeRef::Internal(internal) = node.as_typed() {
-                for i in 0..=internal.get_num_keys() {
+                for i in 0..internal.get_num_keys() {
                     print_table(f, table, internal.get_child_at(i), visited, indent_size + 2)?;
                 }
             }
             Ok(())
         }
-        writeln!(f, "Table {{ root_page_num: {} }}", self.root_page_num)?;
+        writeln!(
+            f,
+            "Table {{ root_page_num: {} }}",
+            self.get_root_num().unwrap()
+        )?;
         let mut visited = vec![false; self.pager.num_pages.get()];
-        print_table(f, self, self.root_page_num, &mut visited, 0)?;
+        print_table(f, self, self.get_root_num().unwrap(), &mut visited, 0)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test::init_test_db;
+
+    #[test]
+    fn find_leaf() {
+        let db = "find_leaf";
+        let mut table = init_test_db(db);
+        let node = table.leaf_mut(0).unwrap();
+        node.set_key(0, 2);
+        node.set_key(1, 3);
+        node.set_key(2, 5);
+        node.set_num_cells(3);
+        println!("{}", node.node_ref.node);
+        assert_eq!(table.find_leaf(0, 1).unwrap().cell_num, 0);
+        assert_eq!(table.find_leaf(0, 2).unwrap().cell_num, 0);
+        assert_eq!(table.find_leaf(0, 3).unwrap().cell_num, 1);
+        assert_eq!(table.find_leaf(0, 5).unwrap().cell_num, 2);
     }
 }

@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    meta::{MetaMut, MetaRef},
     pager::{Page, PageBuffer, PAGE_SIZE},
     table::{Row, ROW_SIZE},
 };
@@ -15,7 +16,7 @@ pub enum NodeType {
     Leaf,
 }
 
-const POINTER_SIZE: usize = std::mem::size_of::<usize>();
+pub const POINTER_SIZE: usize = std::mem::size_of::<usize>();
 
 // COMMON_NODE_HEADER:
 //   NODE_TYPE, IS_ROOT, PARENT_POINTER
@@ -53,30 +54,26 @@ pub const LEAF_NODE_MAX_CELLS: usize = 4; // DEBUG: 4 for testing
 // INTERNAL NODE HEADER
 const INTERNAL_NODE_NUM_KEYS_SIZE: usize = POINTER_SIZE;
 const INTERNAL_NODE_NUM_KEYS_OFFSET: usize = COMMON_NODE_HEADER_SIZE;
-const INTERNAL_NODE_RIGHT_CHILD_SIZE: usize = POINTER_SIZE;
-const INTERNAL_NODE_RIGHT_CHILD_OFFSET: usize =
-    INTERNAL_NODE_NUM_KEYS_OFFSET + INTERNAL_NODE_NUM_KEYS_SIZE;
-const INTERNAL_NODE_HEADER_SIZE: usize =
-    COMMON_NODE_HEADER_SIZE + INTERNAL_NODE_NUM_KEYS_SIZE + INTERNAL_NODE_RIGHT_CHILD_SIZE;
+const INTERNAL_NODE_HEADER_SIZE: usize = COMMON_NODE_HEADER_SIZE + INTERNAL_NODE_NUM_KEYS_SIZE;
 
 // INTERNAL NODE BODY
 //   {INTERNAL_NODE_CHILD, INTERNAL_NODE_KEY}...
 const INTERNAL_NODE_CHILD_SIZE: usize = POINTER_SIZE;
 const INTERNAL_NODE_KEY_SIZE: usize = 8;
 const INTERNAL_NODE_CELL_SIZE: usize = INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE;
-pub const INTERNAL_NODE_MAX_CELLS: usize = 3; // DEBUG: 3 for testing
+pub const INTERNAL_NODE_MAX_CELLS: usize = 4; // DEBUG: 4 for testing
 
 // Node Splitting
-pub const LEAF_NODE_LEFT_SPLIT_COUNT: usize = (LEAF_NODE_MAX_CELLS + 1) / 2;
+pub const LEAF_NODE_LEFT_SPLIT_COUNT: usize = (LEAF_NODE_MAX_CELLS + 2) / 2;
 pub const LEAF_NODE_RIGHT_SPLIT_COUNT: usize = LEAF_NODE_MAX_CELLS + 1 - LEAF_NODE_LEFT_SPLIT_COUNT;
 
-pub const INTERNAL_NODE_LEFT_SPLIT_COUNT: usize = (INTERNAL_NODE_MAX_CELLS + 1) / 2;
+pub const INTERNAL_NODE_LEFT_SPLIT_COUNT: usize = (INTERNAL_NODE_MAX_CELLS + 2) / 2;
 pub const INTERNAL_NODE_RIGHT_SPLIT_COUNT: usize =
-    INTERNAL_NODE_MAX_CELLS - INTERNAL_NODE_LEFT_SPLIT_COUNT;
+    INTERNAL_NODE_MAX_CELLS + 1 - INTERNAL_NODE_LEFT_SPLIT_COUNT;
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    page: Page,
+    pub page: Page,
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +138,6 @@ impl Node {
         self.set_root(false);
         let internal = self.internal_node_mut();
         internal.set_num_keys(0);
-        internal.set_right_child(0);
         internal
     }
     pub fn internal_node_mut(&self) -> InternalMut {
@@ -209,10 +205,10 @@ impl Node {
     }
 
     // Max Key (internal and leaf)
-    pub fn get_max_key(&self) -> u64 {
+    pub fn get_first_key(&self) -> u64 {
         match self.as_typed() {
-            NodeRef::Internal(internal) => internal.get_key_at(internal.get_num_keys() - 1),
-            NodeRef::Leaf(leaf) => leaf.get_key(leaf.get_num_cells() - 1),
+            NodeRef::Internal(internal) => internal.get_key_at(0),
+            NodeRef::Leaf(leaf) => leaf.get_key(0),
         }
     }
 
@@ -230,6 +226,19 @@ impl Node {
         T: ?Sized,
     {
         RefMut::map(self.page.borrow_mut(), f)
+    }
+
+    // Meta
+    pub fn meta_node(&self) -> MetaRef {
+        MetaRef::new(self.clone())
+    }
+    pub fn meta_node_mut(&self) -> MetaMut {
+        MetaMut::new(self.clone())
+    }
+    pub fn init_meta(&self) -> MetaMut {
+        let meta = MetaMut::new(self.clone());
+        meta.init();
+        meta
     }
 }
 
@@ -307,14 +316,6 @@ impl InternalRef {
                 .unwrap(),
         )
     }
-    pub fn get_right_child(&self) -> usize {
-        usize::from_le_bytes(
-            self.node.page.borrow().buf
-                [INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
-                .try_into()
-                .unwrap(),
-        )
-    }
     pub fn get_key_at(&self, cell: usize) -> u64 {
         let start =
             INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE + INTERNAL_NODE_CHILD_SIZE;
@@ -325,9 +326,6 @@ impl InternalRef {
         )
     }
     pub fn get_child_at(&self, cell: usize) -> usize {
-        if cell == self.get_num_keys() {
-            return self.get_right_child();
-        }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
         usize::from_le_bytes(
             self.node.page.borrow().buf[start..start + INTERNAL_NODE_CHILD_SIZE]
@@ -336,31 +334,23 @@ impl InternalRef {
         )
     }
     // Find key
-    pub fn find_key(&self, key: u64) -> usize {
+    pub fn find_key(&self, key: u64) -> Option<usize> {
         let mut min_index = 0;
         let mut max_index = self.get_num_keys();
+        println!("min {} max {}; node{}", min_index, max_index, self.node);
         while min_index < max_index {
             let index = (min_index + max_index) / 2;
             let key_at_index = self.get_key_at(index);
-            if key <= key_at_index {
+            if key_at_index > key {
                 max_index = index;
             } else {
                 min_index = index + 1;
             }
         }
-        min_index
-    }
-    // Find index
-    pub fn find_node_index(&self, node_num: usize, key: u64) -> usize {
-        let num = self.find_key(key);
-        let child = self.get_child_at(num);
-        if child != node_num {
-            panic!(
-                "missing node_num {} by key {} (found {})",
-                node_num, key, child
-            )
+        if min_index == 0 {
+            return None;
         }
-        num
+        Some(min_index - 1 as usize)
     }
 }
 
@@ -370,11 +360,6 @@ impl InternalMut {
             [INTERNAL_NODE_NUM_KEYS_OFFSET..INTERNAL_NODE_NUM_KEYS_OFFSET + 8]
             .copy_from_slice(&num_keys.to_le_bytes())
     }
-    pub fn set_right_child(&self, right_child: usize) {
-        self.node.page.borrow_mut().buf
-            [INTERNAL_NODE_RIGHT_CHILD_OFFSET..INTERNAL_NODE_RIGHT_CHILD_OFFSET + 8]
-            .copy_from_slice(&right_child.to_le_bytes())
-    }
     pub fn set_key_at(&self, cell: usize, key: u64) {
         let start =
             INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE + INTERNAL_NODE_CHILD_SIZE;
@@ -383,10 +368,6 @@ impl InternalMut {
     }
 
     pub fn set_child_at(&self, cell: usize, child: usize) {
-        if cell == self.get_num_keys() {
-            self.set_right_child(child);
-            return;
-        }
         let start = INTERNAL_NODE_HEADER_SIZE + cell * INTERNAL_NODE_CELL_SIZE;
         self.node.page.borrow_mut().buf[start..start + INTERNAL_NODE_CHILD_SIZE]
             .copy_from_slice(&child.to_le_bytes())
@@ -450,13 +431,11 @@ impl Display for Node {
             NodeRef::Internal(internal) => {
                 let num_keys = internal.get_num_keys();
                 writeln!(f, " ( NumKeys: {} )", num_keys)?;
-                let right_child = internal.get_right_child();
                 for i in 0..num_keys as usize {
                     let child = internal.get_child_at(i);
                     let key = internal.get_key_at(i);
-                    write!(f, "{} [{}] ", child, key)?;
+                    write!(f, "[{}] {} ", key, child)?;
                 }
-                writeln!(f, "{}", right_child)?;
             }
         }
         Ok(())
@@ -503,9 +482,6 @@ mod tests {
         assert_eq!(internal.get_key_at(0), 1);
         internal.set_child_at(0, 2);
         assert_eq!(internal.get_child_at(0), 2);
-        internal.set_right_child(3);
-        assert_eq!(internal.get_right_child(), 3);
-        assert_eq!(internal.get_child_at(1), 3);
     }
     #[test]
     fn find_key() {
@@ -515,27 +491,11 @@ mod tests {
         internal.set_key_at(0, 1);
         internal.set_key_at(1, 3);
         internal.set_key_at(2, 5);
-        assert_eq!(internal.find_key(0), 0);
-        assert_eq!(internal.find_key(1), 0);
-        assert_eq!(internal.find_key(2), 1);
-        assert_eq!(internal.find_key(5), 2);
-        assert_eq!(internal.find_key(6), 3);
-    }
-    #[test]
-    fn find_index() {
-        let node = Node::new(new_page());
-        let internal = node.init_internal();
-        internal.set_num_keys(3);
-        internal.set_key_at(0, 2);
-        internal.set_child_at(0, 1);
-        internal.set_key_at(1, 8);
-        internal.set_child_at(1, 3);
-        internal.set_key_at(2, 10);
-        internal.set_child_at(2, 5);
-        internal.set_right_child(7);
-        assert_eq!(internal.find_node_index(1, 2), 0);
-        assert_eq!(internal.find_node_index(3, 8), 1);
-        assert_eq!(internal.find_node_index(5, 10), 2);
-        assert_eq!(internal.find_node_index(7, 15), 3);
+        assert_eq!(internal.find_key(0), None);
+        assert_eq!(internal.find_key(1), Some(0));
+        assert_eq!(internal.find_key(2), Some(0));
+        assert_eq!(internal.find_key(3), Some(1));
+        assert_eq!(internal.find_key(4), Some(1));
+        assert_eq!(internal.find_key(5), Some(2));
     }
 }

@@ -1,5 +1,6 @@
 mod commands;
 mod cursor;
+mod meta;
 mod node;
 mod pager;
 mod sql_error;
@@ -15,6 +16,7 @@ fn main() {
     let mut table = Table::open(&filename).unwrap();
     loop {
         let mut buf = String::new();
+        println!("> ");
         if let Err(e) = std::io::stdin().read_line(&mut buf) {
             println!("Error reading input: {}", e);
             continue;
@@ -108,7 +110,7 @@ mod test {
         let db = "tough_insert";
         let mut table = init_test_db(db);
 
-        let rows = 14;
+        let rows = 60;
         for i in 0..rows {
             let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
             statement.execute(&mut table).unwrap();
@@ -154,11 +156,12 @@ mod test {
     fn random_insert() {
         let db = "random_insert";
         let mut table = init_test_db(db);
-        let order = vec![9, 17, 3, 2, 6, 8, 11, 1, 7, 21, 4, 15, 12, 14, 20, 13];
+        let order = vec![9, 17, 5, 4, 6, 8, 11, 2, 1, 0, 7, 21, 15, 12, 14, 20, 13];
         for i in &order {
             let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
+            println!("##### {} #####", i);
             statement.execute(&mut table).unwrap();
-            println!("##### {} #####\n{}", i, table);
+            println!("{}", table);
         }
 
         for i in &order {
