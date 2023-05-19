@@ -87,7 +87,7 @@ impl Statement {
                     name: *name,
                     email: *email,
                 };
-                let cursor = table.find(*id as u64)?;
+                let cursor = table.find(*id)?;
 
                 if cursor.has_cell()? && cursor.get()?.get_key() == *id as u64 {
                     return Err(SqlError::DuplicateKey);
@@ -96,8 +96,8 @@ impl Statement {
                 Ok(vec![row])
             }
             Statement::Update(id, name, email) => {
-                let cursor = table.find(*id as u64)?;
-                if !cursor.has_cell()? || cursor.get()?.get_key() != *id as u64 {
+                let cursor = table.find(*id)?;
+                if !cursor.check_key(*id)? {
                     return Err(SqlError::NoData);
                 }
                 let row = Row {
@@ -110,6 +110,9 @@ impl Statement {
             }
             Statement::Select(i) => {
                 let cursor = table.find(*i)?;
+                if !cursor.check_key(*i)? {
+                    return Err(SqlError::NoData);
+                }
                 let row = cursor.get()?;
                 let row = Row::deserialize(&row.get_value());
                 Ok(vec![row])

@@ -61,6 +61,14 @@ impl<'a> Cursor<'a> {
         let node = self.table.leaf_ref(self.page_num)?;
         Ok(self.cell_num < node.get_num_cells())
     }
+    /// Check if the cursor has same key
+    pub fn check_key(&self, key: u64) -> SqlResult<bool> {
+        if !self.has_cell()? {
+            return Ok(false);
+        }
+        let node = self.table.leaf_ref(self.page_num)?;
+        Ok(node.get_key(self.cell_num) == key)
+    }
 
     /// Update value
     pub fn update(&self, value: [u8; ROW_SIZE]) -> SqlResult<()> {
