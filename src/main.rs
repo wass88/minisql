@@ -7,6 +7,9 @@ mod sql_error;
 mod string_utils;
 mod table;
 
+use std::io::stdout;
+use std::io::Write;
+
 use commands::*;
 use sql_error::{SqlError, SqlResult};
 use table::Table;
@@ -16,7 +19,8 @@ fn main() {
     let mut table = Table::open(&filename).unwrap();
     loop {
         let mut buf = String::new();
-        println!("> ");
+        print!("> ");
+        stdout().flush().unwrap();
         if let Err(e) = std::io::stdin().read_line(&mut buf) {
             println!("Error reading input: {}", e);
             continue;
@@ -61,6 +65,8 @@ fn meta_command(buf: &str, table: &mut Table) -> SqlResult<()> {
 }
 #[cfg(test)]
 mod test {
+    use std::assert_eq;
+
     use super::*;
     #[test]
     fn insert_select() {
@@ -189,7 +195,43 @@ mod test {
             println!("{}", table);
         }
     }
+    #[test]
+    fn update() {
+        let db = "update";
+        let mut table = init_test_db(db);
+        let order = vec![9, 17, 3, 2, 6];
+        for i in &order {
+            let statement = prepare_statement(&format!("insert {} name{} {}@a", i, i, i)).unwrap();
+            println!("##### ins {} #####", i);
+            statement.execute(&mut table).unwrap();
+            println!("{}", table);
+        }
 
+        for i in &order {
+            let statement = prepare_statement(&format!("update {} name{} {}@b", i, i, i)).unwrap();
+            println!("##### upd {} #####", i);
+            statement.execute(&mut table).unwrap();
+            println!("{}", table);
+        }
+
+        fn null_term_buf_to_str(buf: &[u8]) -> String {
+            let mut s = String::new();
+            for i in buf {
+                if *i == 0 {
+                    break;
+                }
+                s.push(*i as char);
+            }
+            s
+        }
+
+        for i in &order {
+            let statement = prepare_statement(&format!("select {}", i)).unwrap();
+            let row = &statement.execute(&mut table).unwrap()[0];
+            assert_eq!(row.id, *i);
+            assert_eq!(null_term_buf_to_str(&row.email), format!("{}@b", i));
+        }
+    }
     fn db_name(prefix: &str) -> String {
         format!("./forTest/{}.db", prefix)
     }

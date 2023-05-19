@@ -62,6 +62,19 @@ impl<'a> Cursor<'a> {
         Ok(self.cell_num < node.get_num_cells())
     }
 
+    /// Update value
+    pub fn update(&self, value: [u8; ROW_SIZE]) -> SqlResult<()> {
+        println!(
+            "[Update] node {}[{}] key: {}",
+            self.page_num,
+            self.cell_num,
+            self.get()?.get_key(),
+        );
+        let node = self.table.leaf_mut(self.page_num)?;
+        node.value(self.cell_num).copy_from_slice(value.as_ref());
+        Ok(())
+    }
+
     /// Insert at the position of the cursor
     pub fn insert(&self, key: u64, value: [u8; ROW_SIZE]) -> SqlResult<()> {
         println!(
